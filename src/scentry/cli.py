@@ -13,9 +13,24 @@ def main() -> None:
     sub.add_parser("worker", help="run queued and scheduled scans")
     sub.add_parser("hass-sync", help="follow what Home Assistant's Marketplace has installed")
     sub.add_parser("notify", help="send notifications about scan results")
+    sub.add_parser("migrate", help="bring the database to the newest schema (every service "
+                                   "also does this when it starts)")  # fmt: skip
+    new = sub.add_parser("new-migration", help="development: write a migration for model "
+                                               "changes")  # fmt: skip
+    new.add_argument("message")
     args = parser.parse_args()
 
-    if args.command == "web":
+    if args.command == "migrate":
+        from scentry import db
+        from scentry.config import get_settings
+
+        db.configure(get_settings().database_url)
+    elif args.command == "new-migration":
+        from scentry import db
+
+        for path in db.new_revision(args.message):
+            print(path)
+    elif args.command == "web":
         import uvicorn
 
         from scentry.config import get_settings

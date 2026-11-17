@@ -2,12 +2,14 @@
 # stack can be deployed without building (Portainer can't build through its agent).
 #   push to main  -> :latest and :sha-<commit>
 #   tag vX.Y.Z    -> :X.Y.Z and :X.Y
+# Pull requests run the tests only.
 name: images
 
 on:
   push:
     branches: [main]
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 permissions: {}
@@ -17,8 +19,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Images are published only when the tests pass, on Postgres as deployed: whatever
+  # reaches :latest may be pulled by an auto-updater and migrate a real database.
+  test:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci  # a throwaway database inside the job
+          POSTGRES_DB: ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci" --health-interval 5s --health-retries 10
+    env:
+      SCENTRY_TEST_POSTGRES: postgresql+psycopg://ci:ci@127.0.0.1:5432/ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --disable-pip-version-check -e ".[dev]"
+      - run: ruff check .
+      - run: pytest -q -rs
+
   build:
     name: ${{ matrix.image }}
+    needs: test
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     permissions:
       contents: read

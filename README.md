@@ -76,6 +76,20 @@ The stack's name decides its volumes' names, so keep the name when redeploying.
 The portal speaks plain HTTP and listens on `127.0.0.1` by default. Put it behind
 your reverse proxy for TLS before opening it to your network.
 
+### Upgrading
+
+Pull the new images (in Portainer: *Pull and redeploy*). Each service brings the
+database to the new schema when it starts; the first one to start does it while the
+others wait. Images are published only after the tests pass on Postgres, but a
+migration changes your data in place, so back the database up first if it matters:
+
+```sh
+docker compose exec db pg_dump -U scentry scentry > scentry-backup.sql
+```
+
+There's no going back to an older version on a migrated database; restore the backup
+instead.
+
 ### Settings
 
 Everything is an environment variable; `.env.example` lists them with comments.
@@ -221,6 +235,13 @@ Adding a scanner: subclass `SarifScanner` in `src/scentry/scanners/tools.py` (a
 command that writes SARIF is all it takes), add it to `PROFILE_SCANNERS`, and install
 the tool in the `tools` stage of `docker/Dockerfile`.
 
+Changing the database: edit `src/scentry/models.py`, then
+`.venv/bin/scentry new-migration "what changed"` writes a migration to
+`src/scentry/migrations/versions/`. Read it before committing: it can't tell a renamed
+column from a dropped and added one. The tests fail while a model change has no
+migration; set `SCENTRY_TEST_POSTGRES` to an empty scratch database to run them on
+Postgres too, as CI does.
+
 ## Not built yet
 
 - Notification settings per target (today they are global).
@@ -229,7 +250,6 @@ the tool in the `tools` stage of `docker/Dockerfile`.
 - Merging the same vulnerability reported under different ids (CVE / GHSA).
 - Scanning on new commits; scans run on a per-target interval.
 - Optional AI review and explanations.
-- Database migrations (tables are created on start; schema changes aren't handled).
 - A lockfile with hashes for this app's own Python dependencies.
 - arm64 images (a Raspberry Pi can build its own with `compose.build.yaml`), and
   signed images.
