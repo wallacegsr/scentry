@@ -12,7 +12,7 @@ from pathlib import Path
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
-from scentry import acquire, findings
+from scentry import acquire, findings, updates
 from scentry.config import Settings
 from scentry.models import Finding, Scan, Target, utcnow
 from scentry.scanners import ScanContext, Scanner, ScannerRun, execute, scanners_for
@@ -55,6 +55,9 @@ def run_scan(
         scan.complete = all(r.state in ("ok", "not_applicable") for r in runs)
         _score(session, scan, runs)
         scan.status = "done"
+        if target.profile == "ha":
+            updates.schedule(scan, settings, utcnow())
+            updates.after_scan(session, scan, settings)
     except _Deferred as wait:
         session.rollback()
         defer_github_scans(session, wait.until)
@@ -106,6 +109,7 @@ def _score(session: Session, scan: Scan, runs: list[ScannerRun]) -> None:
         scan.commit_sha = extra.get("commit_sha") or scan.commit_sha
         scan.ref = scan.ref or extra.get("ref")
         scan.report = extra.get("report")
+        scan.barkley_id = extra.get("barkley_id")
         return
     open_findings = session.scalars(
         select(Finding).where(Finding.target_id == scan.target_id, Finding.status == "open")

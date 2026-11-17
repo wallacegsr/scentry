@@ -99,7 +99,30 @@ class Scan(Base):
     # (nothing worth a message), or "stale" (finished too long ago to announce).
     notice: Mapped[str | None] = mapped_column(String(10), default=None, index=True)
 
+    # "scan", or "recheck": made by asking OSV again about an earlier scan's packages
+    # (recheck_of) after its advisories changed. Its code wasn't fetched again.
+    kind: Mapped[str] = mapped_column(String(10), default="scan", server_default="scan")
+    recheck_of: Mapped[int | None] = mapped_column(default=None)
+    # The same scan in Barkley's own store on the runner, which keeps the packages it
+    # resolved: what an advisory re-check asks about. None: can't be re-checked.
+    barkley_id: Mapped[int | None] = mapped_column(default=None)
+    advisories_checked_at: Mapped[datetime.datetime | None] = mapped_column(default=None)
+    advisories_next_at: Mapped[datetime.datetime | None] = mapped_column(default=None)
+    advisories_error: Mapped[str | None] = mapped_column(Text, default=None)
+    # What changed since diff_from (another scan of this target): Barkley's comparison.
+    diff_from: Mapped[int | None] = mapped_column(default=None)
+    diff: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+
     target: Mapped[Target] = relationship(back_populates="scans")
+
+    @property
+    def headline(self) -> list[dict[str, Any]]:
+        """The changes in the comparison that matter, most important first."""
+        d = self.diff or {}
+        cut = d.get("headline_rank", 40)
+        top = [c for c in d.get("changes") or [] if isinstance(c, dict) and
+               isinstance(c.get("rank"), int) and c["rank"] >= cut]  # fmt: skip
+        return top[:12]
 
 
 class Finding(Base):

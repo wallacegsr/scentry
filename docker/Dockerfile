@@ -123,6 +123,7 @@ ENV PATH=/opt/scentry/bin:/opt/tools/bin:$PATH \
     HOME=/cache \
     XDG_CACHE_HOME=/cache \
     SCENTRY_WORK_DIR=/work \
+    SCENTRY_BARKLEY_STORE=/cache/barkley/scans.db \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_PYTHON_DOWNLOADS=never \

@@ -6,6 +6,9 @@ Two modes:
   would install, and its score and verdict are the scan's result.
 - profile "owned": Barkley reads the cloned tree of a repository that contains a
   Home Assistant integration or card, and its findings join the others.
+
+Also from Barkley: `compare` (what a newer version changes, `sniff-test diff`) and
+`recheck` (advisories asked again for a stored scan's packages).
 """
 
 from __future__ import annotations
@@ -13,13 +16,18 @@ from __future__ import annotations
 import datetime
 import json
 import re
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
 
 from scentry import proc, sarif
 from scentry.models import SEVERITY_RANK, utcnow
 from scentry.scanners.base import RawFinding, ScanContext, Scanner, ScannerRun
 
 SUPPORTED_SCHEMA = 1
+SUPPORTED_DIFF = 1
 _DROP = ("context", "ai_brief")  # bulky, and only useful to Barkley's own panel
+_STORED = re.compile(r"stored\s+as\s+scan\s+#(\d+)")
 
 
 _LIMITED = re.compile(r"API limit is used up|rate limit exceeded", re.IGNORECASE)
@@ -56,15 +64,20 @@ class Barkley(Scanner):
     def run(self, ctx: ScanContext) -> ScannerRun:
         out = ctx.out_dir / "barkley.json"
         env = {}
+        store = ""
         if ctx.profile == "ha":
             cmd = ["sniff-test", "scan", ctx.source]
             if ctx.ref:
                 cmd += ["--ref", ctx.ref]
             if ctx.settings.public_github_token:
                 env["GITHUB_TOKEN"] = ctx.settings.public_github_token
+            store = ctx.settings.barkley_store
         else:
             cmd = ["sniff-test", "scan", str(ctx.tree)]
-        cmd += ["--json", "-o", str(out)]
+        cmd += ["-o", str(out)]
+        # In the store, the scan keeps the packages it resolved, for advisory re-checks.
+        # (Barkley names the stored scan only when not printing JSON.)
+        cmd += ["--store", store] if store else ["--json"]
         res = proc.run(cmd, timeout=ctx.settings.scanner_timeout, env=env)
         try:
             report = json.loads(out.read_text("utf-8"))
@@ -80,11 +93,12 @@ class Barkley(Scanner):
             return ScannerRun(
                 self.name, "error", f"unsupported report schema {report.get('schema_version')!r}"
             )
+        stored = _STORED.search(res.stderr or "") if store else None
         return ScannerRun(
             self.name,
             "ok",
             detail=f"sniff-test {(report.get('tool') or {}).get('version', '?')}",
-            findings=[_finding(f) for f in report.get("findings") or []],
+            findings=findings_of(report),
             extra={
                 "score": report.get("score"),
                 "verdict": (report.get("verdict") or {}).get("label"),
@@ -92,8 +106,91 @@ class Barkley(Scanner):
                 "commit_sha": (report.get("target") or {}).get("commit_sha"),
                 "ref": (report.get("target") or {}).get("ref"),
                 "report": {k: v for k, v in report.items() if k not in _DROP},
+                "barkley_id": int(stored[1]) if stored else None,
             },
         )
+
+
+def findings_of(report: dict) -> list[RawFinding]:
+    return [_finding(f) for f in report.get("findings") or [] if isinstance(f, dict)]
+
+
+class BarkleyError(Exception):
+    pass
+
+
+def compare(old: dict, new: dict, work: Path, timeout: int) -> dict:
+    """Barkley's comparison of two of its reports (`sniff-test diff`): what the newer
+    version changes. Offline: both reports are files, nothing is fetched or scanned."""
+    paths = [work / "old.json", work / "new.json"]
+    for path, report in zip(paths, (old, new), strict=True):
+        path.write_text(json.dumps(report), "utf-8")
+    out = work / "diff.json"
+    out.unlink(missing_ok=True)  # only this run's answer counts
+    res = proc.run(["sniff-test", "diff", str(paths[0]), str(paths[1]), "--offline",
+                    "--json", "-o", str(out)], timeout=timeout)  # fmt: skip
+    try:
+        result = json.loads(out.read_text("utf-8"))
+    except (OSError, ValueError) as exc:
+        tail = (res.stderr or res.stdout or "").strip()[-300:]
+        raise BarkleyError(f"no comparison (exit {res.returncode}): {tail}") from exc
+    if not isinstance(result, dict) or result.get("diff_version") != SUPPORTED_DIFF:
+        raise BarkleyError(f"unsupported comparison version {result.get('diff_version')!r}")
+    return result
+
+
+@dataclass
+class Recheck:
+    state: str  # same | changed | error
+    detail: str = ""
+    report: dict | None = None  # changed: the new report
+    barkley_id: int | None = None  # changed: the new report in Barkley's store
+
+
+def recheck(store: str, barkley_id: int, work: Path, timeout: int) -> Recheck:
+    """Ask OSV again about the packages a stored scan resolved, with Barkley's own
+    re-check (its `recheck.recheck`, run by its own interpreter: the command line has no
+    such command). No code is fetched and GitHub isn't asked anything. A re-check that
+    couldn't ask OSV is an error, never a result."""
+    python = barkley_python()
+    if python is None:
+        return Recheck("error", "sniff-test isn't installed")
+    out = work / "recheck.json"
+    out.unlink(missing_ok=True)
+    script = Path(__file__).with_name("barkley_recheck.py")
+    res = proc.run([python, "-I", str(script), store, str(barkley_id), str(out)],
+                   cwd=work, timeout=timeout)  # fmt: skip
+    try:
+        result = json.loads(out.read_text("utf-8"))
+    except (OSError, ValueError):
+        tail = (res.stderr or res.stdout or "").strip()[-300:]
+        return Recheck("error", f"no result (exit {res.returncode}): {tail}")
+    state = result.get("state")
+    if state == "changed":
+        report = result.get("report")
+        if not isinstance(report, dict) or report.get("schema_version") != SUPPORTED_SCHEMA:
+            return Recheck("error", "the re-checked report isn't one this version reads")
+        return Recheck("changed", report={k: v for k, v in report.items() if k not in _DROP},
+                       barkley_id=result.get("barkley_id"))  # fmt: skip
+    if state == "same":
+        return Recheck("same")
+    return Recheck("error", sarif.clean(result.get("detail") or "unknown", 300))
+
+
+def barkley_python() -> str | None:
+    """The interpreter of Barkley's own environment, from its command's first line."""
+    exe = shutil.which("sniff-test")
+    if exe is None:
+        return None
+    try:
+        with open(exe, "rb") as fh:  # noqa: PTH123
+            first = fh.readline(500).decode("utf-8", "replace")
+    except OSError:
+        return None
+    if not first.startswith("#!"):
+        return None
+    python = first[2:].strip().split()[0]
+    return python if Path(python).is_file() else None
 
 
 def _finding(f: dict) -> RawFinding:

@@ -159,6 +159,23 @@ integration, which can't report installs, so changes there are picked up by the
 10-minute check. On HA OS or Supervised, [Barkley](https://github.com/SeriesOfTubez/ha-barkley)
 does this as an add-on.
 
+### What an update changes, and new advisories
+
+When an update is offered, its scan page shows **What changed since** the installed
+version: Barkley's comparison of the two reports (`sniff-test diff`), the changes that
+matter first (a new finding, a new host the code talks to, a package added, a new
+publisher), then a count of the rest. Every other Home Assistant scan is compared with
+the last scan of the version before it. Comparing reads two reports and fetches nothing.
+
+A vulnerability published after a version was scanned would otherwise wait for next
+week's rescan. Once a day (`SCENTRY_RECHECK_HOURS`, 24) the runner, when it has nothing
+queued, asks OSV again about the packages each installed and offered version resolved,
+which Barkley keeps in its store on the runner's `/cache` volume. That fetches no code
+and asks GitHub nothing; it takes seconds. When the advisories changed, the result is a
+new scan tagged **advisories re-checked**, compared with the scan it re-checked. A scan
+page has **Check advisories again** to do it on the runner's next idle moment. Scans
+made before this existed aren't in Barkley's store, so they wait for their rescan.
+
 ### Notifications
 
 Set `SCENTRY_NOTIFY_URLS` to one or more [Apprise](https://github.com/caronc/apprise/wiki)
@@ -171,7 +188,8 @@ What gets a message:
 | When | Default |
 |---|---|
 | An installed integration or card scores under `SCENTRY_NOTIFY_SCORE_BELOW` | 70: Very Sus and BORK |
-| An offered update does, or scores 10 points worse than the installed version | on |
+| An offered update does, or scores 10 points worse than the installed version (the message lists what it changes) | on |
+| The daily re-check finds a new advisory: newly under the threshold, 10 points worse, or a new high or critical vulnerability | on |
 | Every offered update, including the fine ones | `SCENTRY_NOTIFY_CLEAN_UPDATES=true` |
 | My code: new or reopened findings at `SCENTRY_NOTIFY_MIN_SEVERITY` or worse | high |
 | A target's scans start failing; the Home Assistant sync fails for 30 minutes | on |
@@ -274,7 +292,6 @@ Postgres too, as CI does.
 
 ## Not built yet
 
-- "What would updating change?" (Barkley's `diff`) and the daily advisory re-check.
 - Searching the Marketplace catalog from the portal.
 - Merging the same vulnerability reported under different ids (CVE / GHSA).
 - Scanning on new commits; scans run on a per-target interval.
@@ -285,4 +302,5 @@ Postgres too, as CI does.
 ## Credits
 
 The Home Assistant checks are [Barkley](https://github.com/SeriesOfTubez/ha-barkley)
-(MIT), used unmodified through its command line.
+(MIT), used unmodified: through its command line, and for the advisory re-check (which
+has no command) its own `recheck` function, run by its own Python.

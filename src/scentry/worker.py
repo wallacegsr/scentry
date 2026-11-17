@@ -1,4 +1,5 @@
-"""The runner: takes queued scans one at a time and queues the scheduled ones.
+"""The runner: takes queued scans one at a time and queues the scheduled ones. With
+nothing queued, it asks advisories again for versions scanned a day ago (updates.py).
 
 The queue is the scans table, so a restart loses nothing. Run a single runner: a scan
 found "running" at start-up is assumed to be this runner's own interrupted work.
@@ -13,7 +14,7 @@ import time
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
-from scentry import db, pipeline
+from scentry import db, pipeline, updates
 from scentry.config import Settings, get_settings
 from scentry.models import Scan, Target, utcnow
 
@@ -73,9 +74,10 @@ def schedule_due(session: Session, now: datetime.datetime | None = None) -> int:
     queued = 0
     targets = session.scalars(select(Target).where(Target.enabled, Target.interval_hours > 0))
     for target in targets.all():
-        last = session.scalar(
-            select(Scan).where(Scan.target_id == target.id).order_by(Scan.id.desc()).limit(1)
-        )
+        last = session.scalar(  # an advisory re-check fetched no code: not a scan of it
+            select(Scan).where(Scan.target_id == target.id, Scan.kind != "recheck")
+            .order_by(Scan.id.desc()).limit(1)
+        )  # fmt: skip
         if last is not None:
             if last.status in ACTIVE:
                 continue
@@ -111,4 +113,11 @@ def main(settings: Settings | None = None) -> None:
                 pipeline.run_scan(session, scan, settings)
                 log.info("scan %s: %s", scan.id, scan.status)
                 continue
+            # Nothing queued: one advisory re-check, if one is due (seconds of work).
+            try:
+                if updates.recheck_due(session, settings):
+                    continue
+            except Exception:
+                log.exception("advisory re-checks failed")
+                session.rollback()
         time.sleep(settings.poll_seconds)

@@ -13,7 +13,12 @@ What is announced:
 - an offered update that scores under the threshold, or 10 points worse than the version
   installed (every offered update with SCENTRY_NOTIFY_CLEAN_UPDATES);
 - my code: findings at SCENTRY_NOTIFY_MIN_SEVERITY or above that a scan found or reopened;
+- a new advisory: the daily re-check of an installed or offered version's packages made
+  it newly bad, 10 points worse, or found a high or critical vulnerability;
 - a target whose scans start failing, and a Home Assistant sync failing for 30 minutes.
+
+An offered update's message lists what it changes (Barkley's comparison with the
+installed version) when there is a comparison, its worst findings otherwise.
 
 Each target can be muted, or override any of those settings, on its page in the portal.
 
@@ -170,6 +175,51 @@ def _barkley_lines(scan: Scan) -> list[str]:
     return lines
 
 
+_SIGNS = {"+": "new", "-": "gone", "~": "changed"}
+SERIOUS = ("critical", "high")
+
+
+def _diff_lines(scan: Scan) -> list[str]:
+    """What this version changes that matters, from Barkley's comparison."""
+    top = scan.headline
+    lines = []
+    for c in top[:MAX_LINES]:
+        sev = f" {safe(c.get('severity'), 10)}" if c.get("severity") else ""
+        lines.append(f"{_SIGNS.get(c.get('sign'), 'changed')}{sev}: {safe(c.get('text'), 150)}")
+    if len(top) > MAX_LINES:
+        lines.append(f"and {len(top) - MAX_LINES} more")
+    return lines
+
+
+def _new_serious(scan: Scan) -> bool:
+    """Barkley's comparison has a finding added at high or critical."""
+    return any(isinstance(c, dict) and c.get("sign") == "+" and c.get("group") == "findings"
+               and c.get("severity") in SERIOUS
+               for c in (scan.diff or {}).get("changes") or [])  # fmt: skip
+
+
+def _rechecked(session: Session, scan: Scan, rules: Rules) -> Item | None:
+    """Advisories asked again changed a version's result: said when it got worse."""
+    base = session.get(Scan, scan.recheck_of) if scan.recheck_of else None
+    if base is None or base.score is None:
+        return None
+    bad = scan.score < rules.score_below
+    worse = ((bad and base.score >= rules.score_below) or scan.score <= base.score - REGRESSION
+             or _new_serious(scan))  # fmt: skip
+    if not worse:
+        return None
+    target = scan.target
+    what = f"{_label(target)} {safe(scan.ref, 40)}" if scan.ref else _label(target)
+    if target.origin == "hacs" and target.hacs_removed_at is None:
+        if scan.ref == target.installed_version:
+            what += " (installed)"
+        elif target.update_offered and scan.ref == target.available_version:
+            what += " (update offered)"
+    return Item("failure" if bad else "warning", "New advisory",
+                f"New advisory: {what} now scores {_result(scan)} (was {_result(base)})",
+                _diff_lines(scan) or _barkley_lines(scan), scan.id, scan.finished_at)  # fmt: skip
+
+
 def _failed(session: Session, scan: Scan, rules: Rules) -> Item | None:
     if not rules.failures:
         return None
@@ -204,13 +254,15 @@ def _ha(session: Session, scan: Scan, rules: Rules) -> Item | None:
             return None
         vs = (f"; installed {safe(target.installed_version, 40)} scored {_result(current)}"
               if current else "")  # fmt: skip
+        # What the update changes, when Barkley compared it with the installed version.
+        changes = _diff_lines(scan) if current and scan.diff_from == current.id else []
         if bad or worse:
             return Item("failure" if bad else "warning", "Update offered: look before installing",
                         f"Update offered: {what} scored {_result(scan)}{vs}",
-                        _barkley_lines(scan), scan.id, scan.finished_at)  # fmt: skip
+                        changes or _barkley_lines(scan), scan.id, scan.finished_at)  # fmt: skip
         return Item("info", "Update offered: looks fine",
                     f"Update offered: {what} scored {_result(scan)}{vs}",
-                    [], scan.id, scan.finished_at)  # fmt: skip
+                    changes, scan.id, scan.finished_at)  # fmt: skip
 
     previous = _scored(session, target.id, ref=scan.ref, before=scan.id)
     newly_bad = bad and (previous is None or previous.score >= threshold)
@@ -257,6 +309,8 @@ def evaluate(session: Session, scan: Scan, settings: Settings) -> Item | None:
         return None  # muted
     if scan.status == "failed" or scan.score is None:
         return _failed(session, scan, rules)
+    if scan.kind == "recheck":
+        return _rechecked(session, scan, rules)
     if scan.target.profile == "ha":
         return _ha(session, scan, rules)
     return _owned(session, scan, rules)

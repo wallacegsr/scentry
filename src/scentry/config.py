@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     # portal instead, where it is recorded with a reason and an expiry.
     honor_repo_ignores: bool = False
     poll_seconds: int = 5
+    # Barkley's scan store, which keeps the packages each scan resolved. The runner
+    # image sets it (on the /cache volume); unset, there are no advisory re-checks.
+    barkley_store: str = ""
+    # How often the advisories of each installed and offered version are asked again
+    # (seconds of work, no code fetched). 0: never.
+    recheck_hours: int = 24
 
     # --- Home Assistant sync (the hass-sync service) -------------------------------
     # Unset: off. The token is a long-lived access token of an administrator (HA lists

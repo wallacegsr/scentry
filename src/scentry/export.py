@@ -78,9 +78,14 @@ def scan_dict(s: Scan, *, report: bool = True) -> dict[str, Any]:
         "verdict": s.verdict,
         "error": s.error,
         "scanner_runs": s.scanner_runs or [],
+        "kind": s.kind,  # "recheck": advisories asked again for scan recheck_of
+        "recheck_of": s.recheck_of,
+        "advisories_checked_at": _iso(s.advisories_checked_at),
+        "diff_from": s.diff_from,
     }
     if report:
         out["report"] = s.report  # Barkley's, for Home Assistant targets
+        out["diff"] = s.diff  # Barkley's comparison with scan diff_from
     return out
 
 

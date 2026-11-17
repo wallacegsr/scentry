@@ -51,6 +51,10 @@ def _graded(scans: list[Scan], version: str | None) -> Scan | None:
 
 
 REFRESH_SECONDS = 10
+# Barkley's comparison buckets, in its order, as the scan page names them.
+DIFF_GROUPS = {"findings": "findings", "flows": "data flows", "data": "data read",
+               "hosts": "hosts", "packages": "packages", "hooks": "hooks",
+               "repo": "publisher", "coverage": "coverage"}  # fmt: skip
 
 
 def _duration(delta: datetime.timedelta) -> str:
@@ -388,9 +392,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if scan is None:
             raise HTTPException(404)
         live = progress(session, [scan], utcnow())
+        later = session.scalars(select(Scan).where(Scan.recheck_of == scan.id)
+                                .order_by(Scan.id)).all()  # fmt: skip
         return page(request, "scan.html", scan=scan, target=scan.target, progress=live,
+                    base=session.get(Scan, scan.diff_from) if scan.diff_from else None,
+                    rechecked=session.get(Scan, scan.recheck_of) if scan.recheck_of else None,
+                    later=later, groups=DIFF_GROUPS,
                     refresh=bool(live) and refresh != "0", paused=bool(live) and refresh == "0",
                     refresh_seconds=REFRESH_SECONDS, here="?", user=user)  # fmt: skip
+
+    @app.post("/scans/{scan_id}/recheck")
+    def recheck_now(scan_id: int, session: Session = session_dep, user: str = user_dep):
+        """Ask the runner to ask this scan's advisories again when it is next idle."""
+        scan = session.get(Scan, scan_id)
+        if scan is None or scan.barkley_id is None:
+            raise HTTPException(404)
+        scan.advisories_next_at = utcnow()
+        session.commit()
+        return RedirectResponse(f"/scans/{scan_id}", 303)
 
     @app.post("/findings/{finding_id}/suppress")
     def suppress(

@@ -305,6 +305,8 @@ def test_barkley_report_mapping(tmp_path, settings, monkeypatch):
                       "owner/repo", "v1.0.0", tmp_path)  # fmt: skip
     run = Barkley().run(ctx)
     assert seen["cmd"][:5] == ["sniff-test", "scan", "owner/repo", "--ref", "v1.0.0"]
+    assert seen["cmd"][-1] == "--json"  # no store set
+    assert run.extra["barkley_id"] is None
     assert seen["env"] == {"GITHUB_TOKEN": "pub"}
     assert run.state == "ok" and run.extra["verdict"] == "BORK BORK BORK"
     assert "context" not in run.extra["report"]

@@ -129,7 +129,8 @@
     <tr>
       <td><a href="/scans/{{ s.id }}">{{ s.id }}</a></td>
       <td>{{ result(s, progress.get(s.id)) }}</td>
-      <td class="small">{{ s.ref or "" }} {{ (s.commit_sha or "")[:10] }}</td>
+      <td class="small">{{ s.ref or "" }} {{ (s.commit_sha or "")[:10] }}
+        {%- if s.kind == "recheck" %} <span class="tag">advisories re-checked</span>{% endif %}</td>
       <td>{{ when(s.finished_at) }}</td>
     </tr>
   {% else %}
