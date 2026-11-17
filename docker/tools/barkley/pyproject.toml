@@ -1,0 +1,21 @@
+# Barkley (published as ha-sniff-test), for docker/Dockerfile. It isn't on PyPI: built
+# from its repository at an exact commit (v0.13.0), with the build backend from uv.lock.
+[project]
+name = "scentry-tool-barkley"
+version = "0"
+requires-python = "==3.13.*"
+dependencies = [
+    "ha-sniff-test @ git+https://github.com/SeriesOfTubez/ha-barkley@e7a8c8bd6ccfc53e34b3cfb205fe2f9cec260940",
+    "hatchling>=1.25",  # its build backend: locked here, not fetched at build time
+]
+
+[tool.uv]
+package = false
+# Linux only, and wheels for both image architectures must exist.
+environments = ["sys_platform == 'linux'"]
+required-environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
+# Built inside its own environment, with the locked hatchling, not an isolated one.
+no-build-isolation-package = ["ha-sniff-test"]

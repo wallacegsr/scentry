@@ -3,4 +3,5 @@
 !README.md
 !uv.lock
 !src/**
+!docker/tools/**
 **/__pycache__

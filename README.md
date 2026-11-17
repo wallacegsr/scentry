@@ -13,9 +13,9 @@ different questions with one pipeline:
 A repository of your own that contains a Home Assistant integration gets both: the
 general scanners and the Home Assistant checks.
 
-> **Status: early scaffold.** The pipeline, the portal and the stack work end to end,
-> but see [Not built yet](#not-built-yet). A clean scan means the scanners found
-> nothing, not that the code is safe.
+> **Status: early.** The pipeline, the portal and the stack work end to end, but it is
+> young and lightly used. A clean scan means the scanners found nothing, not that the
+> code is safe.
 
 ## What runs
 
@@ -330,9 +330,12 @@ What goes into the images is pinned:
 
 - Scentry's own Python dependencies, from `uv.lock`: exact versions, every file
   checked against its recorded hash.
-- Every scanner's version, in `docker/Dockerfile`. Release binaries are checked against
-  a sha256, and Barkley is installed from an exact commit. (The scanners' own Python
-  dependencies are resolved when the image is built, within what each scanner allows.)
+- Every scanner's version. The release binaries (osv-scanner, Gitleaks, Trivy) are in
+  `docker/Dockerfile`, each checked against a sha256. The Python ones (Semgrep,
+  GuardDog, Bandit, zizmor, Barkley) are in `docker/tools/<name>/`, each with a
+  `uv.lock` that pins everything it needs, every file checked against its recorded
+  hash, and each in its own environment. They install from wheels only, except Barkley,
+  which isn't on PyPI: it is built from an exact commit, with a locked build backend.
 - The base images, by digest. The GitHub Actions that build them, by commit.
 
 Dependabot proposes updates to all of these weekly, and the tests run on each before
@@ -352,7 +355,13 @@ SCENTRY_ADMIN_PASSWORD=dev .venv/bin/scentry web      # sqlite, http://127.0.0.1
 
 Adding a scanner: subclass `SarifScanner` in `src/scentry/scanners/tools.py` (a
 command that writes SARIF is all it takes), add it to `PROFILE_SCANNERS`, and install
-the tool in the `tools` stage of `docker/Dockerfile`.
+the tool: a release binary in the `tools` stage of `docker/Dockerfile`, a Python tool as
+a new `docker/tools/<name>/pyproject.toml` (copy one) locked with `docker/tools/lock.sh
+<name>`.
+
+Changing a scanner's version: edit its pin in `docker/tools/<name>/pyproject.toml`, then
+`docker/tools/lock.sh <name>` (it locks in a Linux container with Docker, as the image
+is built); CI fails if a lock is out of date.
 
 Changing dependencies: edit `pyproject.toml`, then `uv lock`; CI fails if `uv.lock`
 is out of date. (`pip install -e ".[dev]"` works too, without the lock.)
@@ -363,11 +372,6 @@ Changing the database: edit `src/scentry/models.py`, then
 column from a dropped and added one. The tests fail while a model change has no
 migration; set `SCENTRY_TEST_POSTGRES` to an empty scratch database to run them on
 Postgres too, as CI does.
-
-## Not built yet
-
-- Hash-locked Python dependencies for the scanners themselves (their own versions are
-  pinned).
 
 ## Credits
 

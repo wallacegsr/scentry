@@ -8,12 +8,13 @@
 # (Dependabot moves them); every stage uses the same one.
 
 # --- uv, checked against its sha256 -----------------------------------------------------
+# Also what docker/tools/lock.sh runs in (hence git: Barkley comes from its repository).
 FROM python:3.13-slim-trixie@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS uv
 ARG TARGETARCH
 ARG UV_VERSION=0.13.7
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --no-install-recommends ca-certificates curl git \
     && rm -rf /var/lib/apt/lists/*
 RUN set -eu; \
     case "${TARGETARCH}" in \
@@ -60,13 +61,8 @@ ARG TARGETARCH
 ARG OSV_SCANNER_VERSION=2.7.1
 ARG GITLEAKS_VERSION=8.30.1
 ARG TRIVY_VERSION=0.76.2
-# Python tools, each in its own venv.
-ARG SEMGREP_VERSION=1.185.0
-ARG GUARDDOG_VERSION=3.2.0
-ARG BANDIT_VERSION=1.9.4
-ARG ZIZMOR_VERSION=1.32.0
-# Barkley isn't on PyPI: installed from its repository at an exact commit (v0.13.0).
-ARG BARKLEY_COMMIT=e7a8c8bd6ccfc53e34b3cfb205fe2f9cec260940
+# The Python tools (Semgrep, GuardDog, Bandit, zizmor, Barkley) are pinned in
+# docker/tools/<name>/, with everything they need in its uv.lock.
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update \
@@ -96,18 +92,15 @@ RUN set -eu; \
     chmod 0755 /usr/local/bin/osv-scanner /usr/local/bin/gitleaks /usr/local/bin/trivy; \
     rm -f /tmp/*.tgz
 
-ENV UV_TOOL_DIR=/opt/tools \
-    UV_TOOL_BIN_DIR=/opt/tools/bin \
+# Each into its own environment under /opt/tools, every file checked against the hash in
+# its lock; wheels only, except Barkley itself (see docker/tools/install.py).
+ENV UV_PYTHON=/usr/local/bin/python3 \
     UV_PYTHON_DOWNLOADS=never \
-    UV_NO_CACHE=1
-# Wheels only (--no-build): no setup.py runs while the image is built.
-RUN uv tool install --no-build "semgrep==${SEMGREP_VERSION}" \
-    && uv tool install --no-build "guarddog==${GUARDDOG_VERSION}" \
-    && uv tool install --no-build "bandit[sarif]==${BANDIT_VERSION}" \
-    && uv tool install --no-build "zizmor==${ZIZMOR_VERSION}"
-# Barkley is built from source here (pure Python, hatchling), so this one step builds.
-RUN uv tool install "git+https://github.com/SeriesOfTubez/ha-barkley@${BARKLEY_COMMIT}" \
-    && python -m compileall -q /opt/tools || true
+    UV_NO_CACHE=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+COPY docker/tools /src/tools
+RUN python3 -I /src/tools/install.py /src/tools /opt/tools
 
 # --- runner ----------------------------------------------------------------------------
 FROM python:3.13-slim-trixie@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS runner

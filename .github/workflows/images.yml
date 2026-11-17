@@ -51,6 +51,8 @@ jobs:
           enable-cache: false
       # From uv.lock, hashes checked; --locked fails if the lock is out of date.
       - run: uv sync --locked --extra dev --python python3.13
+      # The scanners' locks (docker/tools) still match their pins.
+      - run: for t in docker/tools/*/; do uv lock --check --project "$t" --python python3.13; done
       - run: uv run --frozen ruff check .
       - run: uv run --frozen pytest -q -rs
 
