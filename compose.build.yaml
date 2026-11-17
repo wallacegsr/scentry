@@ -17,3 +17,6 @@ services:
   notify:
     image: scentry-web:local
     build: { context: ., dockerfile: docker/Dockerfile, target: web }
+  ai:
+    image: scentry-web:local
+    build: { context: ., dockerfile: docker/Dockerfile, target: web }

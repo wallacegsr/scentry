@@ -18,4 +18,34 @@
 </select>
 {%- endmacro %}
 
+{# Claude's explanation of a finding or review of a scan, and the button that asks for one.
+   Everything in note.result is model output about text from scanned code: shown as text. #}
+{% macro ai_note(note, action, ai_on, ai_limit, label) -%}
+{% if note and note.status == "done" and note.result %}{% set r = note.result %}
+<div class="ai">
+  <div class="small"><span class="tag">Claude</span>
+    {% if r.real %}<span class="tag {{ {'likely': 'bad', 'unclear': 'warn'}.get(r.real, '') }}">{{ {"likely": "looks real", "unlikely": "probably harmless here", "unclear": "can't tell"}[r.real] }}</span>{% endif %}</div>
+  {% if r.summary %}<p>{{ r.summary }}</p>{% endif %}
+  {% if r.reason %}<p>{{ r.reason }}</p>{% endif %}
+  {% if r.fix %}<p><strong>What to do:</strong> {{ r.fix }}</p>{% endif %}
+  {% if r.overview %}<p>{{ r.overview }}</p>{% endif %}
+  {% if r.priorities %}<p><strong>Look at first</strong></p>
+  <ol>{% for i in r.priorities %}<li><strong>{{ i.title }}</strong>: {{ i.why }}</li>{% endfor %}</ol>{% endif %}
+  {% if r.noise %}<p><strong>Probably noise</strong></p>
+  <ul>{% for i in r.noise %}<li><strong>{{ i.title }}</strong>: {{ i.why }}</li>{% endfor %}</ul>{% endif %}
+  {% if r.advice %}<p><strong>What to do:</strong> {{ r.advice }}</p>{% endif %}
+  {#- One line: answers keep their own line breaks (white-space: pre-line). -#}
+  <p class="muted small">Written by {{ note.model }} {{ when(note.finished_at) }}, asked by {{ note.requested_by or "–" }}, from what the scanners recorded, which includes text from the scanned code. It can be wrong.</p>
+</div>
+{% elif note and note.status in ("queued", "running") %}
+<p class="small ai"><span class="tag">Claude</span>
+  {% if note.status == "running" %}Answering…{% elif ai_limit %}Waiting: today's limit of requests is used up (until midnight UTC).{% else %}Asked {{ when(note.requested_at) }}; the answer appears here.{% endif %}</p>
+{% elif note and note.status == "error" %}
+<p class="small error-text">Claude couldn't explain this: {{ note.error }}</p>
+{% endif %}
+{% if ai_on and not (note and note.status in ("queued", "running")) %}
+<form method="post" action="{{ action }}"><button>{{ label if not note else "Ask again" }}</button></form>
+{% endif %}
+{%- endmacro %}
+
 {% macro when(dt) -%}{{ dt.strftime("%Y-%m-%d %H:%M") ~ " UTC" if dt else "–" }}{%- endmacro %}

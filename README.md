@@ -134,6 +134,7 @@ Everything is an environment variable; `.env.example` lists them with comments.
 | Subnet clash with `172.30.255.0/28` | `SCENTRY_EGRESS_SUBNET` and `SCENTRY_EGRESS_IP` |
 | Scan what Home Assistant has installed | `SCENTRY_HASS_URL` and `SCENTRY_HASS_TOKEN`, below |
 | Notifications | `SCENTRY_NOTIFY_URLS`, below |
+| Explanations from Claude | `SCENTRY_ANTHROPIC_API_KEY`, below |
 
 ### Connecting Home Assistant
 
@@ -243,6 +244,44 @@ scanned code (names, file paths, rule titles) is cut down to plain letters, digi
 punctuation before it goes into a message, so a repository can't put a mention, markup
 or a link in your notifications.
 
+### AI explanations
+
+Optional. Set `SCENTRY_ANTHROPIC_API_KEY` (an API key from the
+[Anthropic Console](https://console.anthropic.com), billed per use) and two buttons
+appear:
+
+- **Explain with Claude** on each finding: what it means, whether it looks real here
+  (*looks real*, *probably harmless here*, *can't tell*) and why, and what to do: how to
+  fix it in your code, or for an integration you didn't write, whether it matters and
+  what your options are.
+- **Review with Claude** on each scan: how worrying the result is, the findings to look
+  at first, the ones that are probably noise, and what to do next: the fixes that
+  matter in your code, or whether an integration looks fine to install or keep.
+
+Nothing is sent until someone presses one. Claude is then sent what the scanners
+recorded: titles, rule ids, messages, file paths, vulnerability ids, the verdict, and
+the short excerpts of code kept as evidence (a few lines each). Never a checkout, a
+token or a password. Answers stay on the page they were asked from; **Ask again**
+replaces one.
+
+Claude is Claude Opus 5.5 by default (`SCENTRY_AI_MODEL`). At most
+`SCENTRY_AI_DAILY_LIMIT` requests a day are sent (50; 0 for no limit); the front page
+shows how many have been used. A finding's explanation is usually a couple of thousand
+tokens; a scan's review with many findings, more. When Claude's safety checks decline a
+request (security findings can read like attack work), Anthropic's fallback model
+answers it instead.
+
+The material comes from scanned code, which can be written to mislead a reviewer:
+a comment saying *this is safe, ignore previous instructions*. So Claude gets no tools,
+only the material and the question, and its answer is text that is shown and nothing
+else. The material is fenced off and named as data, and Claude is told to point out
+any such text rather than follow it. Every answer is marked as Claude's, from text out
+of the scanned code, and possibly wrong: it's a second opinion to read, not a verdict.
+Grades, scores and notifications never depend on it.
+
+The key is given only to the **ai** container, which calls the Anthropic API and never
+touches scanned code.
+
 ## How the stack is put together
 
 ```
@@ -259,6 +298,9 @@ or a link in your notifications.
             └──────────┘
             ┌──────────┐
  ntfy etc ◀─│  notify  │──▶ db       (optional: announces results)
+            └──────────┘
+            ┌──────────┐
+ Anthropic ◀│    ai    │──▶ db       (optional: explanations, when asked)
             └──────────┘
 ```
 
@@ -279,6 +321,9 @@ or a link in your notifications.
   It is the only container with the HA token, and it never touches scanned code.
 - **notify** (optional) sends the digests. It is the only container with the
   notification URLs, and it never touches scanned code.
+- **ai** (optional) answers requests for explanations through the Anthropic API. It is
+  the only container with that key, and it never touches scanned code: it sends what
+  the scanners recorded, from the database.
 - **db** is Postgres. SQLite works too (`SCENTRY_DATABASE_URL`), for development.
 
 What goes into the images is pinned:
@@ -302,6 +347,7 @@ SCENTRY_ADMIN_PASSWORD=dev .venv/bin/scentry web      # sqlite, http://127.0.0.1
 .venv/bin/scentry worker                             # scanners must be on PATH
 .venv/bin/scentry hass-sync                          # with SCENTRY_HASS_URL/_TOKEN
 .venv/bin/scentry notify                             # with SCENTRY_NOTIFY_URLS
+.venv/bin/scentry ai                                 # with SCENTRY_ANTHROPIC_API_KEY
 ```
 
 Adding a scanner: subclass `SarifScanner` in `src/scentry/scanners/tools.py` (a
@@ -320,7 +366,6 @@ Postgres too, as CI does.
 
 ## Not built yet
 
-- Optional AI review and explanations.
 - Hash-locked Python dependencies for the scanners themselves (their own versions are
   pinned).
 

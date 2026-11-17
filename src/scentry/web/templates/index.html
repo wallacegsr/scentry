@@ -113,6 +113,25 @@
 </section>
 {% endif %}
 
+{% if ai_state %}
+<section class="status">
+  <div>
+    <strong>AI explanations</strong>
+    {% if not ai_state.configured %}
+      <span class="muted small">off · set SCENTRY_ANTHROPIC_API_KEY on the ai service</span>
+    {% else %}
+      {% if ai_gone %}<span class="tag bad">ai service not running</span>{% endif %}
+      {% if ai_limit %}<span class="tag warn">today's limit used up</span>{% endif %}
+      <span class="muted small">{{ ai_state.model }} · on request, from a finding or a scan
+        {%- if ai_state.daily_limit %} · {{ ai_state.used if ai_state.day == now.date().isoformat() else 0 }} of {{ ai_state.daily_limit }} today{% endif %}</span>
+      {% if ai_state.error %}
+        <div class="error-text small">{{ ai_state.error }} ({{ ai_state.error_at|ago(now) }})</div>
+      {% endif %}
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+
 {% if sections.installed %}
 <h1>Installed in Home Assistant</h1>
 <p class="muted small">What the Marketplace (HACS) has installed, scanned at the installed version.

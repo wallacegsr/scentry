@@ -122,8 +122,26 @@ services:
     healthcheck: { disable: true }
     networks: [backend, notify]
 
+  # Optional AI explanations: Claude explains a finding or reviews a scan when someone
+  # asks in the portal. Off until SCENTRY_ANTHROPIC_API_KEY is set (it then just idles).
+  # The only container with that key; it reads results and never touches scanned code.
+  ai:
+    <<: *hardening
+    image: ${SCENTRY_IMAGES:-ghcr.io/wallacegsr/scentry}-web:${SCENTRY_VERSION:-latest}
+    command: ["scentry", "ai"]
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      SCENTRY_DATABASE_URL: postgresql+psycopg://scentry:${POSTGRES_PASSWORD}@db/scentry
+      SCENTRY_ANTHROPIC_API_KEY: ${SCENTRY_ANTHROPIC_API_KEY:-}
+      SCENTRY_AI_MODEL: ${SCENTRY_AI_MODEL:-claude-opus-5-5}
+      SCENTRY_AI_DAILY_LIMIT: ${SCENTRY_AI_DAILY_LIMIT:-50}
+    tmpfs: ["/tmp"]
+    healthcheck: { disable: true }
+    networks: [backend, ai]
+
 networks:
   frontend: {}
+  ai: {}                        # the ai service's way to api.anthropic.com
   hass: {}                      # hass-sync's way to Home Assistant on your network
   notify: {}                    # the notifier's way to your notification services
   backend: { internal: true }   # web, runner, db: no route out

@@ -38,6 +38,8 @@ td { overflow-wrap: anywhere; }
 .finding { background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
   padding: 12px; margin: 8px 0; }
 .finding p { margin: 8px 0; }
+.ai { border-left: 3px solid var(--accent); padding: 2px 10px; margin: 8px 0; }
+.ai p, .ai li { white-space: pre-line; }
 pre { margin: 8px 0; padding: 8px; background: var(--bg); border-radius: 4px; overflow-x: auto;
   font: 13px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tabs { display: flex; gap: 16px; margin: 8px 0; }

@@ -79,6 +79,7 @@ class Target(Base):
     findings: Mapped[list[Finding]] = relationship(
         back_populates="target", cascade="all, delete-orphan"
     )
+    ai_notes: Mapped[list[AiNote]] = relationship(cascade="all, delete-orphan")
 
 
 class Scan(Base):
@@ -207,6 +208,47 @@ class CatalogItem(Base):
     downloads: Mapped[int | None] = mapped_column(default=None)
     installed: Mapped[bool] = mapped_column(default=False)
     seen_at: Mapped[datetime.datetime] = mapped_column(default=utcnow)
+
+
+class AiNote(Base):
+    """Claude's explanation of one finding, or review of one scan: asked for in the portal,
+    written by the ai service. `result` is model output about untrusted text: shown, never
+    acted on."""
+
+    __tablename__ = "ai_notes"
+    __table_args__ = (UniqueConstraint("kind", "subject_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("targets.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))  # "finding" | "scan"
+    subject_id: Mapped[int] = mapped_column()  # the finding's or the scan's id
+    status: Mapped[str] = mapped_column(String(10), default="queued", index=True)
+    requested_by: Mapped[str | None] = mapped_column(String(200), default=None)
+    requested_at: Mapped[datetime.datetime] = mapped_column(default=utcnow)
+    started_at: Mapped[datetime.datetime | None] = mapped_column(default=None)
+    finished_at: Mapped[datetime.datetime | None] = mapped_column(default=None)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    model: Mapped[str | None] = mapped_column(String(100), default=None)  # that answered
+    input_tokens: Mapped[int | None] = mapped_column(default=None)
+    output_tokens: Mapped[int | None] = mapped_column(default=None)
+
+
+class AiState(Base):
+    """Status of the ai service (one row), for the portal: whether to offer explanations.
+    Never holds the API key."""
+
+    __tablename__ = "ai_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    configured: Mapped[bool] = mapped_column(default=False)  # has a key
+    model: Mapped[str | None] = mapped_column(String(100), default=None)
+    daily_limit: Mapped[int] = mapped_column(default=0)  # 0: none
+    day: Mapped[str | None] = mapped_column(String(10), default=None)  # UTC date of `used`
+    used: Mapped[int] = mapped_column(default=0)  # requests sent that day
+    seen_at: Mapped[datetime.datetime | None] = mapped_column(default=None)  # heartbeat
+    error: Mapped[str | None] = mapped_column(Text, default=None)  # the last failed request
+    error_at: Mapped[datetime.datetime | None] = mapped_column(default=None)
 
 
 class NotifyState(Base):

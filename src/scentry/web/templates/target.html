@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import choice, result, when %}
+{% from "_macros.html" import ai_note, choice, result, when %}
 {% block title %}{{ target.name }} · Scentry{% endblock %}
 {% block main %}
 <h1>{{ target.name }}</h1>
@@ -105,7 +105,7 @@
   {% endfor %}
 </nav>
 {% for f in findings %}
-<article class="finding">
+<article class="finding" id="f{{ f.id }}">
   <div><span class="sev {{ f.severity }}">{{ f.severity }}</span> <strong>{{ f.title }}</strong></div>
   <div class="muted small">{{ f.scanner }} · {{ f.rule_id }}{% if f.file %} · {{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}{% endif %}</div>
   {% if f.same_as is not none %}{% set twin = twin_of.get(f.same_as) %}
@@ -119,6 +119,7 @@
   {% endif %}
   {% if f.message %}<p>{{ f.message }}</p>{% endif %}
   {% if f.evidence %}<pre>{{ f.evidence }}</pre>{% endif %}
+  {{ ai_note(notes.get(f.id), "/findings/" ~ f.id ~ "/explain", ai_on, ai_limit, "Explain with Claude") }}
   {% if f.status == "open" %}
   <details>
     <summary>Suppress</summary>

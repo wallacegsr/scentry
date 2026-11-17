@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     notify_max_wait_minutes: int = 15  # wait for the queue to drain, at most this long
     public_url: str = ""  # the portal's address, for links in messages
 
+    # --- AI explanations (the ai service) --------------------------------------------
+    # An Anthropic API key. Unset: off, and the portal offers no explanations. Only the
+    # ai service is given it. Nothing is sent until someone asks for an explanation.
+    anthropic_api_key: str = ""
+    ai_model: str = "claude-opus-5-5"
+    ai_daily_limit: int = 50  # requests per day (UTC); further ones wait for the next day
+
 
 @lru_cache
 def get_settings() -> Settings:

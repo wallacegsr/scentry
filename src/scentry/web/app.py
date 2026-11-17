@@ -19,13 +19,14 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from scentry import __version__, acquire, db, export, findings, hass_sync, notify, worker
+from scentry import __version__, acquire, ai, db, export, findings, hass_sync, notify, worker
 from scentry.config import Settings, get_settings
 from scentry.findings import DEFAULT_SUPPRESSION_DAYS, SUPPRESSION_REASONS
 from scentry.models import (
     PROFILES,
     SEVERITIES,
     SEVERITY_RANK,
+    AiState,
     CatalogItem,
     Finding,
     HassSync,
@@ -223,6 +224,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             notifier and notifier.services
             and (notifier.seen_at is None or now - notifier.seen_at > notify.HEARTBEAT)
         )  # fmt: skip
+        ai_state = session.get(AiState, 1)
+        ai_gone = bool(ai_state and ai_state.configured and (
+            ai_state.seen_at is None or now - ai_state.seen_at > ai.HEARTBEAT))  # fmt: skip
         waiting = session.execute(
             select(func.count(), func.max(Scan.not_before))
             .where(Scan.status == "queued", Scan.not_before > now)
@@ -230,7 +234,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return page(request, "index.html", sections=sections, error=error, profiles=PROFILES,
                     sync=sync, sync_counts=hass_sync.installed_counts(session),
                     notifier=notifier, notifier_gone=notifier_gone, waiting=waiting,
-                    now=now, user=user)  # fmt: skip
+                    ai_state=ai_state, ai_gone=ai_gone,
+                    ai_limit=ai.limit_reached(ai_state, now), now=now, user=user)  # fmt: skip
 
     @app.post("/hass/sync")
     def request_sync(session: Session = session_dep, user: str = user_dep):
@@ -387,14 +392,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                       Finding.status == "open")).all()  # fmt: skip
             why = findings.issues(open_now)
         notifier = session.get(NotifyState, 1)
+        notes = ai.notes_for(session, "finding", (f.id for f in found))
+        asking = any(n.status in ai.PENDING for n in notes.values())
         return page(request, "target.html", target=target, findings=found, counts=counts,
-                    twin_of=twin_of,
+                    twin_of=twin_of, notes=notes, ai_on=ai.enabled(session),
+                    ai_limit=ai.limit_reached(session.get(AiState, 1), now),
                     notifier=notifier, defaults=(notifier.defaults if notifier else None) or {},
                     severities=SEVERITIES[:-1],
                     status=status, scans=target.scans[:10], progress=live, why=why,
                     deducted=sum(i.deduction for i in why or []),
                     latest=next((s for s in target.scans if s.status == "done"), None),
-                    refresh=bool(live) and refresh != "0", paused=bool(live) and refresh == "0",
+                    refresh=bool(live or asking) and refresh != "0",
+                    paused=bool(live or asking) and refresh == "0",
+                    refresh_what=None if live else "Claude is answering",
                     refresh_seconds=REFRESH_SECONDS, here=f"?status={quote(status)}",
                     user=user)  # fmt: skip
 
@@ -458,14 +468,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scan = session.get(Scan, scan_id)
         if scan is None:
             raise HTTPException(404)
-        live = progress(session, [scan], utcnow())
+        now = utcnow()
+        live = progress(session, [scan], now)
+        note = ai.note_for(session, "scan", scan.id)
+        asking = bool(note and note.status in ai.PENDING)
         later = session.scalars(select(Scan).where(Scan.recheck_of == scan.id)
                                 .order_by(Scan.id)).all()  # fmt: skip
         return page(request, "scan.html", scan=scan, target=scan.target, progress=live,
                     base=session.get(Scan, scan.diff_from) if scan.diff_from else None,
                     rechecked=session.get(Scan, scan.recheck_of) if scan.recheck_of else None,
-                    later=later, groups=DIFF_GROUPS,
-                    refresh=bool(live) and refresh != "0", paused=bool(live) and refresh == "0",
+                    later=later, groups=DIFF_GROUPS, note=note, ai_on=ai.enabled(session),
+                    ai_limit=ai.limit_reached(session.get(AiState, 1), now),
+                    refresh=bool(live or asking) and refresh != "0",
+                    paused=bool(live or asking) and refresh == "0",
+                    refresh_what=None if live else "Claude is answering",
                     refresh_seconds=REFRESH_SECONDS, here="?", user=user)  # fmt: skip
 
     @app.post("/scans/{scan_id}/recheck")
@@ -477,6 +493,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         scan.advisories_next_at = utcnow()
         session.commit()
         return RedirectResponse(f"/scans/{scan_id}", 303)
+
+    @app.post("/scans/{scan_id}/review")
+    def review_scan(scan_id: int, session: Session = session_dep, user: str = user_dep):
+        """Ask Claude to review this scan's result (the ai service answers)."""
+        scan = session.get(Scan, scan_id)
+        if scan is None or scan.status != "done":
+            raise HTTPException(404)
+        if not ai.enabled(session):
+            raise HTTPException(409, "AI explanations are off.")
+        ai.request(session, "scan", scan.id, scan.target_id, user)
+        return RedirectResponse(f"/scans/{scan_id}#review", 303)
+
+    @app.post("/findings/{finding_id}/explain")
+    def explain_finding(finding_id: int, session: Session = session_dep, user: str = user_dep):
+        """Ask Claude to explain this finding (the ai service answers)."""
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise HTTPException(404)
+        if not ai.enabled(session):
+            raise HTTPException(409, "AI explanations are off.")
+        ai.request(session, "finding", finding.id, finding.target_id, user)
+        return RedirectResponse(f"/targets/{finding.target_id}?status={quote(finding.status)}"
+                                f"#f{finding.id}", 303)  # fmt: skip
 
     @app.post("/findings/{finding_id}/suppress")
     def suppress(
