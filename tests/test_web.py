@@ -136,6 +136,58 @@ def test_installed_section_and_sync_button(client):
     assert "Sync requested" in client.get("/", auth=AUTH).text
 
 
+def test_marketplace_search_and_scan(client):
+    from scentry.models import CatalogItem, HassSync, utcnow
+
+    assert "the sync is connected" in client.get("/marketplace", auth=AUTH).text
+    with db.SessionLocal() as s:
+        s.add(HassSync(id=1, last_ok_at=utcnow(), catalog_size=3, catalog_at=utcnow()))
+        s.add_all([
+            CatalogItem(repo="a/weather", kind="integration", name="Weather", stars=50,
+                        description="Forecasts <b>now</b>", version="v2.0"),
+            CatalogItem(repo="b/clock", kind="card", name="Clock_Card", stars=900,
+                        description="A 100% clock"),
+            CatalogItem(repo="c/forecast-card", kind="card", name="Forecast", stars=5,
+                        description="weather on a card", version="1.0"),
+        ])  # fmt: skip
+        s.commit()
+    assert "Search the Marketplace" in client.get("/", auth=AUTH).text
+
+    page = client.get("/marketplace", auth=AUTH).text
+    assert page.index("Clock_Card") < page.index("Weather") < page.index("Forecast")  # stars
+    page = client.get("/marketplace", params={"q": "WEATHER"}, auth=AUTH).text
+    assert "a/weather" in page and "c/forecast-card" in page and "b/clock" not in page
+    assert "Forecasts &lt;b&gt;now&lt;/b&gt;" in page and "2 matches" in page
+    page = client.get("/marketplace", params={"q": "weather", "kind": "card"}, auth=AUTH).text
+    assert "c/forecast-card" in page and "a/weather" not in page
+    # LIKE wildcards are only text.
+    page = client.get("/marketplace", params={"q": "100%"}, auth=AUTH).text
+    assert "b/clock" in page and "1 match." in page
+    page = client.get("/marketplace", params={"q": "_"}, auth=AUTH).text  # only Clock_Card
+    assert "b/clock" in page and "1 match." in page
+
+    r = client.post("/marketplace/scan", auth=AUTH, data={"repo": "a/weather"})
+    assert r.status_code == 303
+    with db.SessionLocal() as s:
+        t = s.scalar(select(Target).where(Target.source == "a/weather"))
+        assert (t.profile, t.origin, t.hacs_kind, t.interval_hours) == ("ha", "manual",
+                                                                         "integration", 0)
+        assert [(x.ref, x.status) for x in t.scans] == [("v2.0", "queued")]
+    assert r.headers["location"] == f"/targets/{t.id}"
+    # Again while it waits: no second scan. The page says it is on its way.
+    client.post("/marketplace/scan", auth=AUTH, data={"repo": "a/weather"})
+    with db.SessionLocal() as s:
+        assert len(s.scalars(select(Scan)).all()) == 1
+    assert "scan waiting or running" in client.get("/marketplace", params={"q": "weather"},
+                                                    auth=AUTH).text  # fmt: skip
+
+    for repo in ("not/listed", "https://evil.example/x.git"):
+        assert client.post("/marketplace/scan", auth=AUTH, data={"repo": repo}).status_code == 404
+    r = client.post("/marketplace/scan", auth=AUTH, data={"repo": "b/clock"},
+                    headers={"Sec-Fetch-Site": "cross-site"})  # fmt: skip
+    assert r.status_code == 403
+
+
 def test_notifier_status_and_test_button(client):
     from scentry.models import NotifyState, utcnow
 

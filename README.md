@@ -148,7 +148,8 @@ Themes and other kinds the scanner doesn't cover are counted but not scanned.
 4. Restart the stack. The front page shows the connection, and its error if any.
 
 An admin token can do almost anything in Home Assistant, so it is kept to one place:
-the **hass-sync** container, which reads names and versions only. The commands it can
+the **hass-sync** container, which reads the Marketplace's list only (names, versions,
+descriptions). The commands it can
 send are fixed in its code (`src/scentry/hass.py`): the Marketplace list, the
 subscription to install events, and nothing else. It never touches scanned code, and
 the runner, which does, still can't reach your network. Over plain `http://` the token
@@ -158,6 +159,17 @@ Works with HA 2026.11+ (the Marketplace in Core) and with older HA running the H
 integration, which can't report installs, so changes there are picked up by the
 10-minute check. On HA OS or Supervised, [Barkley](https://github.com/SeriesOfTubez/ha-barkley)
 does this as an add-on.
+
+### Searching the Marketplace
+
+The list the sync reads holds the whole catalog, not only what is installed, so the
+portal keeps a copy: **Search the Marketplace** on the front page finds any integration
+or card by name, owner/repo or a word from its description, and **Scan** checks the
+version the Marketplace would install, before you install it. (Without a version from
+HA, Barkley picks it the way the Marketplace would.) Such a scan isn't repeated unless
+you ask; once you install the item, the sync takes the target over. Only an entry that
+is in the catalog can be scanned from there. Names and descriptions are the publishers'
+own text, shown as plain text.
 
 ### What an update changes, and new advisories
 
@@ -292,7 +304,6 @@ Postgres too, as CI does.
 
 ## Not built yet
 
-- Searching the Marketplace catalog from the portal.
 - Merging the same vulnerability reported under different ids (CVE / GHSA).
 - Scanning on new commits; scans run on a per-target interval.
 - Optional AI review and explanations.

@@ -175,6 +175,26 @@ class HassSync(Base):
     installed: Mapped[int] = mapped_column(default=0)
     skipped: Mapped[dict[str, int]] = mapped_column(JSON, default=dict)
     requested_at: Mapped[datetime.datetime | None] = mapped_column(default=None)
+    catalog_size: Mapped[int] = mapped_column(default=0, server_default="0")
+    catalog_at: Mapped[datetime.datetime | None] = mapped_column(default=None)
+
+
+class CatalogItem(Base):
+    """One integration or card in the Home Assistant Marketplace, as the hass-sync service
+    last read it: what the portal searches. Every text field is the publisher's own."""
+
+    __tablename__ = "catalog"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    repo: Mapped[str] = mapped_column(String(201), unique=True)  # owner/name, validated
+    kind: Mapped[str] = mapped_column(String(20))  # integration | card
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text, default="")
+    version: Mapped[str | None] = mapped_column(String(100), default=None)  # would install
+    stars: Mapped[int] = mapped_column(default=0)
+    downloads: Mapped[int | None] = mapped_column(default=None)
+    installed: Mapped[bool] = mapped_column(default=False)
+    seen_at: Mapped[datetime.datetime] = mapped_column(default=utcnow)
 
 
 class NotifyState(Base):

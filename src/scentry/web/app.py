@@ -26,6 +26,7 @@ from scentry.models import (
     PROFILES,
     SEVERITIES,
     SEVERITY_RANK,
+    CatalogItem,
     Finding,
     HassSync,
     NotifyState,
@@ -51,6 +52,7 @@ def _graded(scans: list[Scan], version: str | None) -> Scan | None:
 
 
 REFRESH_SECONDS = 10
+CATALOG_PAGE = 50  # search results shown
 # Barkley's comparison buckets, in its order, as the scan page names them.
 DIFF_GROUPS = {"findings": "findings", "flows": "data flows", "data": "data read",
                "hosts": "hosts", "packages": "packages", "hooks": "hooks",
@@ -274,6 +276,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session.add(target)
         session.commit()
         worker.enqueue(session, target, target.ref)
+        return RedirectResponse(f"/targets/{target.id}", 303)
+
+    @app.get("/marketplace")
+    def marketplace(request: Request, q: str = "", kind: str = "", session: Session = session_dep,
+                    user: str = user_dep):  # fmt: skip
+        """Search the Marketplace catalog the hass-sync service last read."""
+        q = " ".join(q.split())[:100]
+        kind = kind if kind in ("integration", "card") else ""
+        query = select(CatalogItem)
+        for word in q.split()[:8]:
+            like = "%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            query = query.where(or_(CatalogItem.repo.ilike(like, escape="\\"),
+                                    CatalogItem.name.ilike(like, escape="\\"),
+                                    CatalogItem.description.ilike(like, escape="\\")))  # fmt: skip
+        if kind:
+            query = query.where(CatalogItem.kind == kind)
+        total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
+        items = session.scalars(query.order_by(CatalogItem.stars.desc(),
+                                               func.lower(CatalogItem.name))
+                                .limit(CATALOG_PAGE)).all()  # fmt: skip
+        sources = [i.repo.lower() for i in items]
+        targets = {
+            t.source.lower(): t for t in session.scalars(select(Target).where(
+                Target.profile == "ha", func.lower(Target.source).in_(sources)))
+        }  # fmt: skip
+        graded = {k: _graded(t.scans, None) for k, t in targets.items()}
+        busy = {k for k, t in targets.items() if any(s.status in worker.ACTIVE for s in t.scans)}
+        return page(request, "marketplace.html", items=items, total=total, q=q, kind=kind,
+                    targets=targets, graded=graded, busy=busy,
+                    sync=session.get(HassSync, 1), now=utcnow(),
+                    shown=CATALOG_PAGE, user=user)  # fmt: skip
+
+    @app.post("/marketplace/scan")
+    def marketplace_scan(repo: str = Form(...), session: Session = session_dep,
+                         user: str = user_dep):  # fmt: skip
+        """Scan a catalog entry at the version the Marketplace would install. Only a repo
+        in the catalog is accepted; it becomes an HA target that is rescanned only when
+        asked (installing it makes hass-sync take it over)."""
+        item = session.scalar(select(CatalogItem).where(CatalogItem.repo == repo))
+        if item is None:
+            raise HTTPException(404, "Not in the Marketplace catalog.")
+        target = session.scalar(select(Target).where(
+            Target.profile == "ha", func.lower(Target.source) == item.repo.lower()))  # fmt: skip
+        if target is None:
+            target = Target(name=item.name, profile="ha", source=item.repo,
+                            hacs_kind=item.kind, interval_hours=0)  # fmt: skip
+            session.add(target)
+            session.commit()
+        worker.enqueue(session, target, item.version)
         return RedirectResponse(f"/targets/{target.id}", 303)
 
     def download(body: str, media_type: str, name: str) -> Response:

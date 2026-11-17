@@ -1,5 +1,6 @@
 """A deliberately narrow Home Assistant websocket client: it reads which Marketplace
-(HACS) integrations and cards are installed, and nothing else.
+(HACS) integrations and cards are installed, and what the Marketplace offers, and
+nothing else.
 
 HA has no read-only API for this: the commands need an admin user's token, and an admin
 token can do almost anything in HA. So the commands this client may send are fixed in
@@ -117,6 +118,58 @@ def parse_installed(result: Any) -> tuple[list[Installed], dict[str, int]]:
     return items, other
 
 
+@dataclass(frozen=True, slots=True)
+class Listed:
+    """One integration or card the Marketplace offers, installed or not. For searching
+    in the portal; only `repo` and `version` ever reach a scan, both validated."""
+
+    repo: str
+    kind: str
+    name: str
+    description: str  # the publisher's text, shown escaped
+    version: str  # what the Marketplace would install ("" if unknown)
+    stars: int
+    downloads: int | None
+    installed: bool
+
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f​-‏‪-‮⁦-⁩]+")
+
+
+def _text(value: Any, limit: int) -> str:
+    """Publisher text, one line: no control or bidi characters, cut to `limit`."""
+    return " ".join(_CONTROL.sub(" ", str(value or "")).split())[:limit]
+
+
+def _count(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def parse_catalog(result: Any) -> list[Listed]:
+    """The scannable part of the whole catalog. Entries that don't validate are left out."""
+    if not isinstance(result, list):
+        raise HassError("the Marketplace returned something other than a list")
+    out: dict[str, Listed] = {}
+    for r in result:
+        if not isinstance(r, dict) or r.get("category") not in SCANNABLE:
+            continue
+        repo = str(r.get("full_name") or "")
+        if not _REPO.match(repo):
+            continue
+        version = str(r.get("available_version") or r.get("last_version") or "")
+        out[repo.lower()] = Listed(
+            repo=repo,
+            kind=SCANNABLE[r["category"]],
+            name=_text(r.get("name"), 100) or repo,
+            description=_text(r.get("description"), 500),
+            version=version if _VERSION.match(version) else "",
+            stars=_count(r.get("stars")) or 0,
+            downloads=_count(r.get("downloads")),
+            installed=bool(r.get("installed")),
+        )
+    return sorted(out.values(), key=lambda i: i.repo.lower())
+
+
 def matters(signal: str, data: dict[str, Any]) -> bool:
     """Whether an event means the installed list may have changed. The Marketplace's own
     refreshes send action "update" for every repository, so those are ignored."""
@@ -226,9 +279,15 @@ class Connection:
 
     def list_installed(self) -> tuple[list[Installed], dict[str, int], str]:
         """(installed items, skipped counts, the command that answered)."""
+        result, command = self.list_repositories()
+        return (*parse_installed(result), command)
+
+    def list_repositories(self) -> tuple[Any, str]:
+        """The whole catalog as HA lists it (installed or not), and the command that
+        answered. Unvalidated: parse_installed / parse_catalog read it."""
         for command in LIST_COMMANDS:
             try:
-                return (*parse_installed(self.command(command)), command)
+                return self.command(command), command
             except HassError as exc:
                 if "unknown_command" in str(exc):
                     continue  # not this HA's Marketplace: try the next one

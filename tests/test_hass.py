@@ -11,7 +11,7 @@ from websockets.sync.server import serve
 from scentry import db, hass, hass_sync, worker
 from scentry.config import Settings
 from scentry.hass import Connection, HassError, Installed
-from scentry.models import HassSync, Scan, Target, utcnow
+from scentry.models import CatalogItem, HassSync, Scan, Target, utcnow
 
 TOKEN = "test-token"
 
@@ -259,7 +259,9 @@ def test_apply_adopts_a_manual_target_and_retries_failures(session, settings):
 
 
 def test_sync_once_records_status(session, settings, fake):
-    ha = fake([repo("a/b"), repo("x/theme", category="theme")])
+    offered = {"full_name": "o/new", "category": "plugin", "installed": False, "name": "New card",
+               "description": "Shows things", "available_version": "v3", "stars": 12}
+    ha = fake([repo("a/b"), repo("x/theme", category="theme"), offered])
     conn = Connection(ha.url, TOKEN)
     try:
         hass_sync.sync_once(session, conn, settings)
@@ -270,6 +272,48 @@ def test_sync_once_records_status(session, settings, fake):
         1, {"theme": 1}, None, "2026.11.2")  # fmt: skip
     assert row.source == "marketplace/repositories/list"
     assert hass_sync.installed_counts(session) == {"integration": 1}
+    assert row.catalog_size == 2 and row.catalog_at is not None
+    listed = {c.repo: (c.kind, c.installed, c.version, c.stars)
+              for c in session.scalars(select(CatalogItem))}  # fmt: skip
+    assert listed == {"a/b": ("integration", True, "1.0.0", 0), "o/new": ("card", False, "v3", 12)}
+
+
+def test_parse_catalog_validates_everything():
+    listed = hass.parse_catalog([
+        {"full_name": "Good/Card", "category": "plugin", "name": "Good‮Card\n",
+         "description": "x" * 900 + "\x1b[31m", "available_version": "v1", "stars": 5,
+         "downloads": True},
+        {"full_name": "o/no-version", "category": "integration", "available_version": "-x",
+         "stars": -3, "downloads": 40},
+        {"full_name": "not a repo", "category": "integration"},
+        {"full_name": "o/theme", "category": "theme"},
+        "junk",
+    ])  # fmt: skip
+    good, plain = listed
+    assert (good.repo, good.kind, good.name, good.version) == (
+        "Good/Card", "card", "Good Card", "v1")  # fmt: skip
+    assert len(good.description) == 500 and "\x1b" not in good.description
+    assert good.downloads is None and good.stars == 5
+    assert (plain.version, plain.stars, plain.downloads, plain.name) == ("", 0, 40, "o/no-version")
+    with pytest.raises(HassError):
+        hass.parse_catalog({"not": "a list"})
+
+
+def test_store_catalog_follows_the_marketplace(session):
+    now = utcnow()
+    first = hass.parse_catalog([
+        {"full_name": f"o/{n}", "category": "integration", "available_version": "1"}
+        for n in ("a", "b")])  # fmt: skip
+    hass_sync.store_catalog(session, first, now)
+    session.commit()
+    later = now + datetime.timedelta(minutes=10)
+    second = hass.parse_catalog([
+        {"full_name": "o/a", "category": "integration", "available_version": "2"},
+        {"full_name": "o/c", "category": "plugin"}])  # fmt: skip
+    hass_sync.store_catalog(session, second, later)
+    session.commit()
+    rows = {c.repo: (c.version, c.seen_at) for c in session.scalars(select(CatalogItem))}
+    assert rows == {"o/a": ("2", later), "o/c": (None, later)}
 
 
 def test_enqueue_keeps_two_versions_apart(session):

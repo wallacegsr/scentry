@@ -78,6 +78,10 @@
   </div>
   <form method="post" action="/hass/sync"><button>Sync now</button></form>
 </section>
+{% if sync.catalog_size %}
+<p class="small"><a href="/marketplace">Search the Marketplace</a>: check any of its
+  {{ sync.catalog_size }} integrations and cards before you install it.</p>
+{% endif %}
 {% endif %}
 
 {% if notifier %}

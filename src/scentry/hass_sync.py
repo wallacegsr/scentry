@@ -4,7 +4,8 @@ Marketplace (HACS) has installed, and queues scans.
 - an integration or card that is installed becomes an "HA integration" target, and the
   version that is installed gets scanned (so does each new version after an update);
 - an update the Marketplace offers is scanned before you install it;
-- an uninstalled one stops being rescanned, and keeps its history.
+- an uninstalled one stops being rescanned, and keeps its history;
+- the whole catalog (names, descriptions, versions) is kept for the portal's search.
 
 The list is read at start, after every install or uninstall HA reports (HA 2026.11+),
 every SCENTRY_HASS_POLL_SECONDS as a fallback, and when someone presses "Sync now".
@@ -24,8 +25,16 @@ from sqlalchemy.orm import Session
 
 from scentry import db, worker
 from scentry.config import Settings, get_settings
-from scentry.hass import Connection, HassError, Installed, matters
-from scentry.models import HassSync, Scan, Target, utcnow
+from scentry.hass import (
+    Connection,
+    HassError,
+    Installed,
+    Listed,
+    matters,
+    parse_catalog,
+    parse_installed,
+)
+from scentry.models import CatalogItem, HassSync, Scan, Target, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -121,12 +130,41 @@ def apply(
     return result
 
 
+def store_catalog(session: Session, listed: list[Listed], now: datetime.datetime) -> None:
+    """Keep the portal's copy of the catalog in step: changed rows updated, new ones
+    added, ones the Marketplace dropped deleted."""
+    existing = {c.repo.lower(): c for c in session.scalars(select(CatalogItem))}
+    for item in listed:
+        row = existing.pop(item.repo.lower(), None)
+        if row is None:
+            row = CatalogItem(repo=item.repo)
+            session.add(row)
+        fields = {"repo": item.repo, "kind": item.kind, "name": item.name,
+                  "description": item.description, "version": item.version or None,
+                  "stars": item.stars, "downloads": item.downloads,
+                  "installed": item.installed}  # fmt: skip
+        for key, value in fields.items():
+            if getattr(row, key) != value:
+                setattr(row, key, value)
+        row.seen_at = now
+    for row in existing.values():
+        session.delete(row)
+    status = status_row(session)
+    status.catalog_size, status.catalog_at = len(listed), now
+
+
 def sync_once(session: Session, conn: Connection, settings: Settings) -> SyncResult:
     row = status_row(session)
     row.last_attempt_at = utcnow()
     session.commit()
-    items, skipped, source = conn.list_installed()
+    raw, source = conn.list_repositories()
+    items, skipped = parse_installed(raw)
     result = apply(session, items, settings)
+    try:
+        store_catalog(session, parse_catalog(raw), utcnow())
+    except Exception:  # the search is a convenience: never let it stop the sync
+        log.exception("couldn't store the Marketplace catalog")
+        session.rollback()
     row = status_row(session)
     row.last_ok_at, row.error = utcnow(), None
     row.installed, row.skipped, row.source = len(items), skipped, source
