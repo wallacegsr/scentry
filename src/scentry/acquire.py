@@ -103,6 +103,34 @@ def acquire(source: str, ref: str | None, dest: Path, settings: Settings) -> str
     return None
 
 
+def remote_head(source: str, ref: str | None, settings: Settings) -> str:
+    """The commit `ref` (a branch or tag; the default branch when None) points at now,
+    from `git ls-remote`: one request, nothing downloaded, no code. Raises AcquireError."""
+    validate_source(source, settings)
+    validate_ref(ref)
+    if is_local(source):
+        raise AcquireError("Local paths aren't watched for commits.")
+    wanted = [f"refs/heads/{ref}", f"refs/tags/{ref}", f"refs/tags/{ref}^{{}}"] if ref else ["HEAD"]
+    env = {"GIT_TERMINAL_PROMPT": "0"}
+    env.update(auth_env(source, settings.git_tokens))
+    try:
+        res = proc.run(["git", "ls-remote", source, *wanted], timeout=60, env=env)
+    except Exception as exc:  # timeout, git missing
+        raise AcquireError(f"Couldn't ask for new commits: {type(exc).__name__}") from exc
+    if res.returncode != 0:
+        raise AcquireError(f"Couldn't ask for new commits: {res.stderr.strip()[-300:]}")
+    heads = {}
+    for line in res.stdout.splitlines():
+        sha, _, name = line.partition("\t")
+        if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", sha):
+            heads[name.strip()] = sha
+    # A branch first; for an annotated tag, the commit it points at (the ^{} line).
+    for name in (wanted[0], wanted[-1], *wanted[1:-1]) if ref else wanted:
+        if name in heads:
+            return heads[name]
+    raise AcquireError(f"The repository has no {'branch or tag ' + ref if ref else 'HEAD'}.")
+
+
 def sanitize(tree: Path, settings: Settings) -> list[str]:
     """Remove in-repo scanner ignore/config files; returns what was removed."""
     if settings.honor_repo_ignores:

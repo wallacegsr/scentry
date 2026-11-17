@@ -55,6 +55,15 @@ vulnerabilities another finding reports is marked **same vulnerability** on the
 target's page: it is counted, and announced, once. Suppressing a vulnerability under one
 name covers its other names too.
 
+When my code is scanned: when it's added, on its interval (weekly by default, for new
+advisories and rules), when you press **Scan now**, and on each new commit. Every
+`SCENTRY_COMMIT_POLL_MINUTES` (15), when it has nothing queued, the runner asks the git
+host what the branch (or the default branch) points at, with `git ls-remote` and the
+same token as a clone: one small request, nothing downloaded. A commit that hasn't been
+scanned is queued. It polls rather than waiting for webhooks, so the portal needn't be
+reachable from the internet. Each target's page can switch this off; local paths aren't
+watched.
+
 ## Install
 
 You need Docker with Compose, about 3 GB of disk for the images, and 4 GB of memory
@@ -311,7 +320,6 @@ Postgres too, as CI does.
 
 ## Not built yet
 
-- Scanning on new commits; scans run on a per-target interval.
 - Optional AI review and explanations.
 - Hash-locked Python dependencies for the scanners themselves (their own versions are
   pinned).

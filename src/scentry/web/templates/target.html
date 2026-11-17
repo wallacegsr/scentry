@@ -13,6 +13,20 @@
     Rescanned every {{ target.interval_hours }} hours.{% endif %}
 </p>
 {% endif %}
+{% if target.profile == "owned" and target.source.startswith("https://") %}
+<div class="row small">
+  <div>{% if target.watch_commits %}
+    Each new commit on {{ target.ref or "the default branch" }} is scanned: checked
+    {{ target.head_checked_at|ago if target.head_checked_at else "not yet" }}
+    {%- if target.head_sha %}, at {{ target.head_sha[:10] }}{% endif %}.
+    {% if target.head_error %}<div class="error-text">{{ target.head_error }}</div>{% endif %}
+  {% else %}New commits aren't scanned; only {% if target.interval_hours %}every {{ target.interval_hours }} hours and {% endif %}when you ask.{% endif %}</div>
+  <form method="post" action="/targets/{{ target.id }}/watch">
+    <input type="hidden" name="on" value="{{ 'off' if target.watch_commits else 'on' }}">
+    <button>{{ "Stop scanning new commits" if target.watch_commits else "Scan new commits" }}</button>
+  </form>
+</div>
+{% endif %}
 
 <div class="row">
   <form method="post" action="/targets/{{ target.id }}/scan"><button>Scan now</button></form>

@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 from typing import Any
 
-from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, false
+from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, false, true
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 PROFILES = ("owned", "ha")
@@ -57,6 +57,13 @@ class Target(Base):
     notify_min_severity: Mapped[str | None] = mapped_column(String(10), default=None)  # owned
     notify_clean_updates: Mapped[bool | None] = mapped_column(default=None)  # ha, installed
     notify_failures: Mapped[bool | None] = mapped_column(default=None)
+
+    # My code: scan each new commit on the branch (ref, or the default branch). The
+    # runner asks the git host for the branch's head now and then (commits.py).
+    watch_commits: Mapped[bool] = mapped_column(default=True, server_default=true())
+    head_sha: Mapped[str | None] = mapped_column(String(64), default=None)  # last seen
+    head_checked_at: Mapped[datetime.datetime | None] = mapped_column(default=None)
+    head_error: Mapped[str | None] = mapped_column(Text, default=None)
 
     @property
     def update_offered(self) -> bool:

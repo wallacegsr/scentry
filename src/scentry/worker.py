@@ -1,5 +1,6 @@
 """The runner: takes queued scans one at a time and queues the scheduled ones. With
-nothing queued, it asks advisories again for versions scanned a day ago (updates.py).
+nothing queued, it looks for new commits on my repositories (commits.py) and asks
+advisories again for versions scanned a day ago (updates.py).
 
 The queue is the scans table, so a restart loses nothing. Run a single runner: a scan
 found "running" at start-up is assumed to be this runner's own interrupted work.
@@ -14,7 +15,7 @@ import time
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
-from scentry import db, pipeline, updates
+from scentry import commits, db, pipeline, updates
 from scentry.config import Settings, get_settings
 from scentry.models import Scan, Target, utcnow
 
@@ -113,11 +114,12 @@ def main(settings: Settings | None = None) -> None:
                 pipeline.run_scan(session, scan, settings)
                 log.info("scan %s: %s", scan.id, scan.status)
                 continue
-            # Nothing queued: one advisory re-check, if one is due (seconds of work).
+            # Nothing queued: one look for new commits, or one advisory re-check, if one
+            # is due (seconds of work each).
             try:
-                if updates.recheck_due(session, settings):
+                if commits.check_due(session, settings) or updates.recheck_due(session, settings):
                     continue
             except Exception:
-                log.exception("advisory re-checks failed")
+                log.exception("new-commit check or advisory re-check failed")
                 session.rollback()
         time.sleep(settings.poll_seconds)

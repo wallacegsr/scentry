@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     # How often the advisories of each installed and offered version are asked again
     # (seconds of work, no code fetched). 0: never.
     recheck_hours: int = 24
+    # How often each of my repositories' branch is asked for new commits (git ls-remote:
+    # one small request, nothing downloaded); a new one is scanned. 0: never.
+    commit_poll_minutes: int = 15
 
     # --- Home Assistant sync (the hass-sync service) -------------------------------
     # Unset: off. The token is a long-lived access token of an administrator (HA lists

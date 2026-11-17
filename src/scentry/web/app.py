@@ -404,6 +404,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         worker.enqueue(session, target, target.ref)
         return RedirectResponse(f"/targets/{target_id}", 303)
 
+    @app.post("/targets/{target_id}/watch")
+    def target_watch(target_id: int, on: str = Form(...), session: Session = session_dep,
+                     user: str = user_dep):  # fmt: skip
+        """Scan each new commit on the branch, or don't."""
+        target = get_target(session, target_id)
+        if on not in ("on", "off") or target.profile != "owned":
+            raise HTTPException(400)
+        target.watch_commits = on == "on"
+        target.head_checked_at = None  # look straight away
+        session.commit()
+        return RedirectResponse(f"/targets/{target_id}", 303)
+
     @app.post("/targets/{target_id}/notify")
     def target_notify(
         target_id: int,

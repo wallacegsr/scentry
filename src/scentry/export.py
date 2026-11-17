@@ -118,6 +118,8 @@ def target_dict(session: Session, target: Target, *, scans: int = SCANS_PER_TARG
         "uninstalled_at": _iso(target.hacs_removed_at),
         "interval_hours": target.interval_hours,
         "enabled": target.enabled,
+        "watch_commits": target.watch_commits if target.profile == "owned" else None,
+        "head_sha": target.head_sha,  # the branch's commit when last asked
         # This target's own notification settings; null = the notifier's default.
         "notify": {"muted": target.notify_muted, "score_below": target.notify_score_below,
                    "min_severity": target.notify_min_severity,
