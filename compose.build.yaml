@@ -1,0 +1,19 @@
+# Builds the images from this checkout instead of pulling the published ones:
+#   docker compose -f compose.yaml -f compose.build.yaml up -d --build
+# (Not for Portainer: it can't build on an environment it reaches through its agent.)
+services:
+  web:
+    image: scentry-web:local
+    build: { context: ., dockerfile: docker/Dockerfile, target: web }
+  runner:
+    image: scentry-runner:local
+    build: { context: ., dockerfile: docker/Dockerfile, target: runner }
+  egress:
+    image: scentry-egress:local
+    build: { context: docker/egress }
+  hass-sync:
+    image: scentry-web:local
+    build: { context: ., dockerfile: docker/Dockerfile, target: web }
+  notify:
+    image: scentry-web:local
+    build: { context: ., dockerfile: docker/Dockerfile, target: web }

@@ -55,14 +55,23 @@ for the runner while a scan runs.
 
 ```sh
 cp .env.example .env      # set POSTGRES_PASSWORD and SCENTRY_ADMIN_PASSWORD
-docker compose up -d --build
+docker compose up -d
 ```
 
 Open <http://127.0.0.1:8080> and sign in as `admin`.
 
+The images are built by this repository's GitHub Actions and published to
+`ghcr.io/wallacegsr/scentry-{web,runner,egress}` (amd64): `latest` is the newest build
+of `main`, and `SCENTRY_VERSION` pins another. To build them yourself instead:
+
+```sh
+docker compose -f compose.yaml -f compose.build.yaml up -d --build
+```
+
 **Portainer:** Stacks → Add stack → Repository, point it at this repository with
 compose path `compose.yaml`, and add the variables from `.env.example` under
-Environment variables.
+Environment variables (or load your `.env` with *Load variables from .env file*).
+The stack's name decides its volumes' names, so keep the name when redeploying.
 
 The portal speaks plain HTTP and listens on `127.0.0.1` by default. Put it behind
 your reverse proxy for TLS before opening it to your network.
@@ -222,7 +231,8 @@ the tool in the `tools` stage of `docker/Dockerfile`.
 - Optional AI review and explanations.
 - Database migrations (tables are created on start; schema changes aren't handled).
 - A lockfile with hashes for this app's own Python dependencies.
-- Published images; the stack builds them locally.
+- arm64 images (a Raspberry Pi can build its own with `compose.build.yaml`), and
+  signed images.
 
 ## Credits
 

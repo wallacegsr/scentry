@@ -1,5 +1,6 @@
-# Scentry stack. Works with `docker compose up -d --build` and as a Portainer stack
-# built from this repository; set the variables from .env.example in either.
+# Scentry stack. Pulls the published images: `docker compose up -d`, or a Portainer
+# stack from this repository; set the variables from .env.example in either. To build
+# the images from this checkout instead, add compose.build.yaml (see the README).
 name: scentry
 
 x-hardening: &hardening
@@ -27,8 +28,7 @@ services:
   # The portal. Holds the sign-in, never touches scanned code, has no tokens.
   web:
     <<: *hardening
-    image: scentry-web:${SCENTRY_VERSION:-local}
-    build: { context: ., dockerfile: docker/Dockerfile, target: web }
+    image: ${SCENTRY_IMAGES:-ghcr.io/wallacegsr/scentry}-web:${SCENTRY_VERSION:-latest}
     depends_on: { db: { condition: service_healthy } }
     environment:
       SCENTRY_DATABASE_URL: postgresql+psycopg://scentry:${POSTGRES_PASSWORD}@db/scentry
@@ -46,8 +46,7 @@ services:
   # is also its DNS server: names that aren't on the allowlist don't even resolve.
   runner:
     <<: *hardening
-    image: scentry-runner:${SCENTRY_VERSION:-local}
-    build: { context: ., dockerfile: docker/Dockerfile, target: runner }
+    image: ${SCENTRY_IMAGES:-ghcr.io/wallacegsr/scentry}-runner:${SCENTRY_VERSION:-latest}
     depends_on: { db: { condition: service_healthy }, egress: { condition: service_started } }
     environment:
       SCENTRY_DATABASE_URL: postgresql+psycopg://scentry:${POSTGRES_PASSWORD}@db/scentry
@@ -69,8 +68,7 @@ services:
 
   egress:
     <<: *hardening
-    image: scentry-egress:${SCENTRY_VERSION:-local}
-    build: { context: docker/egress }
+    image: ${SCENTRY_IMAGES:-ghcr.io/wallacegsr/scentry}-egress:${SCENTRY_VERSION:-latest}
     environment:
       EXTRA_ALLOWED_DOMAINS: ${SCENTRY_EXTRA_ALLOWED_DOMAINS:-}
       EGRESS_IP: ${SCENTRY_EGRESS_IP:-172.30.255.2}
@@ -84,8 +82,7 @@ services:
   # the HA token; it reads names and versions and never touches scanned code.
   hass-sync:
     <<: *hardening
-    image: scentry-web:${SCENTRY_VERSION:-local}
-    build: { context: ., dockerfile: docker/Dockerfile, target: web }
+    image: ${SCENTRY_IMAGES:-ghcr.io/wallacegsr/scentry}-web:${SCENTRY_VERSION:-latest}
     command: ["scentry", "hass-sync"]
     depends_on: { db: { condition: service_healthy } }
     environment:
@@ -107,8 +104,7 @@ services:
   # only container with those URLs; it reads results and never touches scanned code.
   notify:
     <<: *hardening
-    image: scentry-web:${SCENTRY_VERSION:-local}
-    build: { context: ., dockerfile: docker/Dockerfile, target: web }
+    image: ${SCENTRY_IMAGES:-ghcr.io/wallacegsr/scentry}-web:${SCENTRY_VERSION:-latest}
     command: ["scentry", "notify"]
     depends_on: { db: { condition: service_healthy } }
     environment:
