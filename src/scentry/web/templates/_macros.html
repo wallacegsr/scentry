@@ -1,0 +1,12 @@
+{% macro result(scan, note=none) -%}
+  {%- if scan is none -%}<span class="muted">not scanned</span>
+  {%- elif scan.status == "done" -%}
+    <span class="grade">{{ scan.verdict or "–" }}</span>
+    <span class="muted">{{ scan.score if scan.score is not none else "" }}</span>
+    {%- if not scan.complete %} <span class="tag warn" title="A scanner was missing, failed or timed out">incomplete</span>{% endif %}
+  {%- elif scan.status == "failed" -%}<span class="tag bad">failed</span>
+  {%- else -%}<span class="tag">{{ scan.status }}</span>{% if note %} <span class="muted small">{{ note }}</span>{% endif %}
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro when(dt) -%}{{ dt.strftime("%Y-%m-%d %H:%M") ~ " UTC" if dt else "–" }}{%- endmacro %}

@@ -1,0 +1,141 @@
+# Scentry stack. Works with `docker compose up -d --build` and as a Portainer stack
+# built from this repository; set the variables from .env.example in either.
+name: scentry
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: scentry
+      POSTGRES_USER: scentry
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes: ["db:/var/lib/postgresql/data"]
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scentry -d scentry"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # The portal. Holds the sign-in, never touches scanned code, has no tokens.
+  web:
+    <<: *hardening
+    image: scentry-web:${SCENTRY_VERSION:-local}
+    build: { context: ., dockerfile: docker/Dockerfile, target: web }
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      SCENTRY_DATABASE_URL: postgresql+psycopg://scentry:${POSTGRES_PASSWORD}@db/scentry
+      SCENTRY_AUTH_MODE: ${SCENTRY_AUTH_MODE:-basic}
+      SCENTRY_ADMIN_USER: ${SCENTRY_ADMIN_USER:-admin}
+      SCENTRY_ADMIN_PASSWORD: ${SCENTRY_ADMIN_PASSWORD:-}
+      SCENTRY_PROXY_USER_HEADER: ${SCENTRY_PROXY_USER_HEADER:-Remote-User}
+      SCENTRY_TRUSTED_PROXIES: ${SCENTRY_TRUSTED_PROXIES:-}
+    tmpfs: ["/tmp"]
+    ports: ["${SCENTRY_BIND:-127.0.0.1}:${SCENTRY_PORT:-8080}:8080"]
+    networks: [frontend, backend]
+
+  # The runner. Reads hostile code: no Docker socket, non-root, read-only root, no
+  # capabilities, and no network except the database and the egress gateway, which
+  # is also its DNS server: names that aren't on the allowlist don't even resolve.
+  runner:
+    <<: *hardening
+    image: scentry-runner:${SCENTRY_VERSION:-local}
+    build: { context: ., dockerfile: docker/Dockerfile, target: runner }
+    depends_on: { db: { condition: service_healthy }, egress: { condition: service_started } }
+    environment:
+      SCENTRY_DATABASE_URL: postgresql+psycopg://scentry:${POSTGRES_PASSWORD}@db/scentry
+      SCENTRY_GIT_TOKENS: ${SCENTRY_GIT_TOKENS:-}
+      SCENTRY_PUBLIC_GITHUB_TOKEN: ${SCENTRY_PUBLIC_GITHUB_TOKEN:-}
+      SCENTRY_DISABLED_SCANNERS: ${SCENTRY_DISABLED_SCANNERS:-}
+      SCENTRY_SEMGREP_CONFIG: ${SCENTRY_SEMGREP_CONFIG:-p/default}
+      SCENTRY_HONOR_REPO_IGNORES: ${SCENTRY_HONOR_REPO_IGNORES:-false}
+    # Scanned code lives in memory only and can't be executed from there. tmpfs counts
+    # towards mem_limit, so keep the limit well above the /work size.
+    tmpfs:
+      - /tmp:size=256m
+      - /work:size=${SCENTRY_WORK_SIZE:-1g},uid=10001,gid=10001,mode=0700
+    volumes: ["runner-cache:/cache"]
+    mem_limit: ${SCENTRY_RUNNER_MEMORY:-4g}
+    pids_limit: 512
+    dns: ["${SCENTRY_EGRESS_IP:-172.30.255.2}"]
+    networks: [backend, egress]
+
+  egress:
+    <<: *hardening
+    image: scentry-egress:${SCENTRY_VERSION:-local}
+    build: { context: docker/egress }
+    environment:
+      EXTRA_ALLOWED_DOMAINS: ${SCENTRY_EXTRA_ALLOWED_DOMAINS:-}
+      EGRESS_IP: ${SCENTRY_EGRESS_IP:-172.30.255.2}
+    tmpfs: ["/tmp:uid=65534,gid=65534", "/var/lib/nginx:uid=65534,gid=65534"]
+    networks:
+      egress: { ipv4_address: "${SCENTRY_EGRESS_IP:-172.30.255.2}" }
+      outbound: {}
+
+  # Follows what Home Assistant's Marketplace (HACS) has installed and queues scans.
+  # Off until SCENTRY_HASS_URL is set (it then just idles). The only container with
+  # the HA token; it reads names and versions and never touches scanned code.
+  hass-sync:
+    <<: *hardening
+    image: scentry-web:${SCENTRY_VERSION:-local}
+    build: { context: ., dockerfile: docker/Dockerfile, target: web }
+    command: ["scentry", "hass-sync"]
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      SCENTRY_DATABASE_URL: postgresql+psycopg://scentry:${POSTGRES_PASSWORD}@db/scentry
+      SCENTRY_HASS_URL: ${SCENTRY_HASS_URL:-}
+      SCENTRY_HASS_TOKEN: ${SCENTRY_HASS_TOKEN:-}
+      SCENTRY_HASS_VERIFY_TLS: ${SCENTRY_HASS_VERIFY_TLS:-true}
+      SCENTRY_HASS_CA_FILE: ${SCENTRY_HASS_CA_FILE:-}
+      SCENTRY_HASS_POLL_SECONDS: ${SCENTRY_HASS_POLL_SECONDS:-600}
+      SCENTRY_HASS_SCAN_INTERVAL_HOURS: ${SCENTRY_HASS_SCAN_INTERVAL_HOURS:-168}
+    # HA Container usually runs with network_mode: host; this name reaches it.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    tmpfs: ["/tmp"]
+    healthcheck: { disable: true }   # no web server in this one
+    networks: [backend, hass]
+
+  # Sends a digest when a scan finds something worth a look, through Apprise (ntfy,
+  # Gotify, Discord, Telegram, e-mail, ...). Off until SCENTRY_NOTIFY_URLS is set. The
+  # only container with those URLs; it reads results and never touches scanned code.
+  notify:
+    <<: *hardening
+    image: scentry-web:${SCENTRY_VERSION:-local}
+    build: { context: ., dockerfile: docker/Dockerfile, target: web }
+    command: ["scentry", "notify"]
+    depends_on: { db: { condition: service_healthy } }
+    environment:
+      SCENTRY_DATABASE_URL: postgresql+psycopg://scentry:${POSTGRES_PASSWORD}@db/scentry
+      SCENTRY_NOTIFY_URLS: ${SCENTRY_NOTIFY_URLS:-}
+      SCENTRY_NOTIFY_SCORE_BELOW: ${SCENTRY_NOTIFY_SCORE_BELOW:-70}
+      SCENTRY_NOTIFY_MIN_SEVERITY: ${SCENTRY_NOTIFY_MIN_SEVERITY:-high}
+      SCENTRY_NOTIFY_CLEAN_UPDATES: ${SCENTRY_NOTIFY_CLEAN_UPDATES:-false}
+      SCENTRY_NOTIFY_FAILURES: ${SCENTRY_NOTIFY_FAILURES:-true}
+      SCENTRY_NOTIFY_MAX_WAIT_MINUTES: ${SCENTRY_NOTIFY_MAX_WAIT_MINUTES:-15}
+      SCENTRY_PUBLIC_URL: ${SCENTRY_PUBLIC_URL:-}
+    # For a notification service on this host (ntfy, Gotify, a Home Assistant webhook).
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    tmpfs: ["/tmp"]
+    healthcheck: { disable: true }
+    networks: [backend, notify]
+
+networks:
+  frontend: {}
+  hass: {}                      # hass-sync's way to Home Assistant on your network
+  notify: {}                    # the notifier's way to your notification services
+  backend: { internal: true }   # web, runner, db: no route out
+  egress:                       # runner <-> gateway only
+    internal: true
+    ipam: { config: [{ subnet: "${SCENTRY_EGRESS_SUBNET:-172.30.255.0/28}" }] }
+  outbound: {}                  # the gateway's way to the internet
+
+volumes:
+  db: {}
+  runner-cache: {}

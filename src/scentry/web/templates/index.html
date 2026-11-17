@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% from "_macros.html" import result, when %}
+
+{% macro busy(row) -%}
+  {%- for s in row.busy %}<span class="tag">
+    {%- if s.status == "queued" and s.not_before and s.not_before > now %}waiting until {{ s.not_before.strftime("%H:%M") }} UTC
+    {%- else %}{{ s.status }}{% endif %}{% if s.ref %} {{ s.ref }}{% endif %}</span> {% endfor -%}
+{%- endmacro %}
+
+{% macro table(rows, installed=false) %}
+<table>
+  <thead><tr>
+    <th>Name</th>
+    {% if installed %}<th>Installed</th>{% endif %}
+    <th>Result</th>
+    {% if installed %}<th>Update offered</th>{% else %}<th>Open</th>{% endif %}
+    <th>Last scan</th>
+  </tr></thead>
+  <tbody>
+  {% for row in rows %}
+    {% set t = row.target %}
+    <tr>
+      <td><a href="/targets/{{ t.id }}">{{ t.name }}</a>
+        <div class="muted small">{{ t.source }}{% if not installed and t.ref %} @ {{ t.ref }}{% endif %}
+          {%- if t.hacs_kind %} · {{ t.hacs_kind }}{% endif %}
+          {%- if t.hacs_removed_at %} · <span class="tag">uninstalled {{ t.hacs_removed_at|ago(now) }}</span>{% endif %}</div></td>
+      {% if installed %}<td class="small">{{ t.installed_version }}</td>{% endif %}
+      <td>{{ result(row.graded) }}</td>
+      {% if installed %}
+      <td>{% if t.update_offered %}
+            <span class="small">{{ t.available_version }}</span>
+            {% if row.offered and row.offered.status == "done" %}{{ result(row.offered) }}
+            {% elif not row.offered %}<span class="muted small">not scanned</span>{% endif %}
+          {% else %}<span class="muted">–</span>{% endif %}</td>
+      {% else %}
+      <td>{{ row.open }}</td>
+      {% endif %}
+      <td>{% if row.busy %}{{ busy(row) }}{% else %}{{ when(t.scans[0].finished_at if t.scans else none) }}{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endmacro %}
+
+{% block main %}
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+{% if waiting[0] %}
+<section class="status">
+  <div>
+    <strong>GitHub's API limit is used up</strong>
+    <span class="muted small">{{ waiting[0] }} scan{{ "s" if waiting[0] != 1 }} wait until {{ waiting[1].strftime("%H:%M") }} UTC, then carry on.</span>
+    <div class="small">Without a token GitHub allows 60 requests an hour, which isn't enough for more
+      than a few integrations. If SCENTRY_PUBLIC_GITHUB_TOKEN isn't set yet: create a GitHub token
+      with no permissions at all and set it there, which raises the limit to 5,000.</div>
+  </div>
+</section>
+{% endif %}
+
+{% if sync %}
+<section class="status">
+  <div>
+    <strong>Home Assistant{% if sync.ha_version %} {{ sync.ha_version }}{% endif %}</strong>
+    {% if sync.error %}
+      <span class="tag bad">not connected</span>
+      <div class="error-text small">{{ sync.error }}</div>
+      <div class="muted small">Last successful sync: {{ sync.last_ok_at|ago(now) }}</div>
+    {% else %}
+      <span class="muted small">synced {{ sync.last_ok_at|ago(now) }} ·
+        {%- set ni, nc = sync_counts.get("integration", 0), sync_counts.get("card", 0) %}
+        {{ ni }} integration{{ "s" if ni != 1 }}, {{ nc }} card{{ "s" if nc != 1 }}
+        {%- if sync.skipped %} · not scanned: {% for k, n in sync.skipped|dictsort %}{{ n }} {{ k }}{{ ", " if not loop.last }}{% endfor %}{% endif %}
+        · {{ "watching for installs" if sync.listening else "checking every few minutes" }}</span>
+    {% endif %}
+    {% if sync.requested_at and (not sync.last_attempt_at or sync.requested_at > sync.last_attempt_at) %}
+      <div class="muted small">Sync requested…</div>
+    {% endif %}
+  </div>
+  <form method="post" action="/hass/sync"><button>Sync now</button></form>
+</section>
+{% endif %}
+
+{% if notifier %}
+<section class="status">
+  <div>
+    <strong>Notifications</strong>
+    {% if not notifier.services %}
+      <span class="muted small">off · set SCENTRY_NOTIFY_URLS on the notify service</span>
+    {% else %}
+      {% if notifier_gone %}<span class="tag bad">notify service not running</span>{% endif %}
+      {% if notifier.error %}<span class="tag bad">a send failed</span>{% endif %}
+      <span class="muted small">{{ notifier.services }} service{{ "s" if notifier.services != 1 }}
+        · last sent {{ notifier.last_sent_at|ago(now) }}</span>
+      {% if notifier.error %}
+        <div class="error-text small">{{ notifier.error }} ({{ notifier.error_at|ago(now) }})</div>
+      {% endif %}
+      {% if notifier.test_requested_at and (not notifier.test_done_at or notifier.test_requested_at > notifier.test_done_at) %}
+        <div class="muted small">Test requested…</div>
+      {% elif notifier.test_done_at %}
+        <div class="muted small">Test {{ "delivered" if notifier.test_ok else "not delivered" }} {{ notifier.test_done_at|ago(now) }}</div>
+      {% endif %}
+    {% endif %}
+    {% if notifier.invalid_urls %}
+      <div class="error-text small">{{ notifier.invalid_urls }} notification URL{{ "s" if notifier.invalid_urls != 1 }}
+        couldn't be read and {{ "are" if notifier.invalid_urls != 1 else "is" }} ignored.</div>
+    {% endif %}
+  </div>
+  {% if notifier.services %}<form method="post" action="/notify/test"><button>Send a test</button></form>{% endif %}
+</section>
+{% endif %}
+
+{% if sections.installed %}
+<h1>Installed in Home Assistant</h1>
+<p class="muted small">What the Marketplace (HACS) has installed, scanned at the installed version.
+  An update it offers is scanned before you install it.</p>
+{{ table(sections.installed, installed=true) }}
+{% endif %}
+
+{% if sections.owned %}
+<h1>My code</h1>
+{{ table(sections.owned) }}
+{% endif %}
+
+{% if sections.ha %}
+<h1>Other HA integrations</h1>
+{{ table(sections.ha) }}
+{% endif %}
+
+{% if not (sections.installed or sections.owned or sections.ha) %}
+<h1>Targets</h1>
+<p class="muted">Nothing to scan yet. Add a repository below{% if not sync %}, or connect Home Assistant
+  (SCENTRY_HASS_URL and SCENTRY_HASS_TOKEN) to scan everything the Marketplace has installed{% endif %}.</p>
+{% endif %}
+
+<h2>Add a target</h2>
+<form method="post" action="/targets" class="stack">
+  <label>Kind
+    <select name="profile">
+      <option value="owned">My code: a repository I own</option>
+      <option value="ha">HA integration or card: someone else's, before I install it</option>
+    </select>
+  </label>
+  <label>Repository
+    <input name="source" required placeholder="https://github.com/me/project.git, or owner/repo for HA">
+  </label>
+  <label>Branch or tag <span class="muted">(optional)</span>
+    <input name="ref" placeholder="default branch / the version the Marketplace installs">
+  </label>
+  <label>Name <span class="muted">(optional)</span><input name="name"></label>
+  <label>Rescan every <input name="interval_hours" type="number" min="0" value="168" class="short"> hours
+    <span class="muted">(0 = only when I ask)</span></label>
+  <button>Add and scan</button>
+</form>
+
+<h2>Export</h2>
+<p class="small"><a href="/export.json">Everything as JSON</a>: every target, its findings and
+  current result. · Findings as CSV: <a href="/export/findings.csv?status=open">open</a>,
+  <a href="/export/findings.csv">all</a>. · Each target's page exports its own, as JSON or SARIF.</p>
+{% endblock %}

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Scentry{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {#- Plain HTML refresh (the content security policy allows no scripts), only while a
+      scan on this page is waiting or running. -#}
+  {% if refresh %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endif %}
+</head>
+<body>
+  <header>
+    <a class="brand" href="/">Scentry</a>
+    <span class="muted">{{ user }} · v{{ version }}</span>
+  </header>
+  <main>
+    {% if refresh %}
+    <p class="live small">A scan is in progress: this page refreshes every {{ refresh_seconds }} seconds
+      until it finishes. <a href="{{ here }}&amp;refresh=0">Pause</a> (to write a suppression, say).</p>
+    {% elif paused %}
+    <p class="live small">Auto-refresh paused. <a href="{{ here }}">Resume</a></p>
+    {% endif %}
+    {% block main %}{% endblock %}
+  </main>
+</body>
+</html>

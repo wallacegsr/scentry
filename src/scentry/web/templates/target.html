@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% from "_macros.html" import result, when %}
+{% block title %}{{ target.name }} · Scentry{% endblock %}
+{% block main %}
+<h1>{{ target.name }}</h1>
+<p class="muted">{{ "My code" if target.profile == "owned" else "HA integration" }} ·
+  {{ target.source }}{% if target.ref %} @ {{ target.ref }}{% endif %}</p>
+{% if target.origin == "hacs" %}
+<p class="small">
+  {% if target.hacs_removed_at %}Uninstalled from Home Assistant; no longer rescanned on a schedule.
+  {% else %}Installed in Home Assistant: {{ target.installed_version }}
+    {%- if target.update_offered %} · update offered: {{ target.available_version }}{% endif %}.
+    Rescanned every {{ target.interval_hours }} hours.{% endif %}
+</p>
+{% endif %}
+
+<div class="row">
+  <form method="post" action="/targets/{{ target.id }}/scan"><button>Scan now</button></form>
+  <details>
+    <summary>Remove</summary>
+    <form method="post" action="/targets/{{ target.id }}/delete">
+      <p>This deletes the target with its scans, findings and suppressions.</p>
+      <button class="danger">Remove {{ target.name }}</button>
+    </form>
+  </details>
+</div>
+
+{% if why is not none and latest %}
+<h2>Grade {{ latest.verdict }} <span class="muted">{{ latest.score }}</span></h2>
+{% if why %}
+<p class="muted small">Each problem counts once, however many places it is found in; two scanners
+  reporting the same places count once. 100 − {{ deducted }} = {{ [100 - deducted, 0]|max }}
+  {%- if latest.score < [100 - deducted, 0]|max %}, capped at {{ latest.score }}
+  ({% if why|selectattr("severity", "equalto", "critical")|list %}an open critical: D at best{% elif why|selectattr("severity", "equalto", "high")|list %}an open high: B at best{% else %}a scanner didn't finish{% endif %}){% endif %}.</p>
+<table>
+  <thead><tr><th>Severity</th><th>Problem</th><th>Places</th><th>Points</th></tr></thead>
+  <tbody>
+  {% for i in why %}
+    <tr>
+      <td><span class="sev {{ i.severity }}">{{ i.severity }}</span></td>
+      <td>{{ i.title }}<div class="muted small">{{ i.scanner }}: {{ i.rule_id }}
+        {%- for a in i.also %} · also {{ a }}{% endfor %}</div></td>
+      <td>{{ i.count }}</td>
+      <td>−{{ i.deduction }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted small">No open findings{% if not latest.complete %}; capped at 89 because a scanner didn't finish{% endif %}.</p>
+{% endif %}
+{% endif %}
+
+<h2>Findings</h2>
+<nav class="tabs">
+  {% for s in ("open", "suppressed", "fixed") %}
+    <a href="?status={{ s }}" {% if s == status %}class="on"{% endif %}>{{ s|capitalize }} ({{ counts.get(s, 0) }})</a>
+  {% endfor %}
+</nav>
+{% for f in findings %}
+<article class="finding">
+  <div><span class="sev {{ f.severity }}">{{ f.severity }}</span> <strong>{{ f.title }}</strong></div>
+  <div class="muted small">{{ f.scanner }} · {{ f.rule_id }}{% if f.file %} · {{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}{% endif %}</div>
+  {% if f.message %}<p>{{ f.message }}</p>{% endif %}
+  {% if f.evidence %}<pre>{{ f.evidence }}</pre>{% endif %}
+  {% if f.status == "open" %}
+  <details>
+    <summary>Suppress</summary>
+    <form method="post" action="/findings/{{ f.id }}/suppress" class="stack">
+      <label>Reason
+        <select name="reason">{% for r in reasons %}<option value="{{ r }}">{{ r.replace("_", " ")|capitalize }}</option>{% endfor %}</select>
+      </label>
+      <label>Why <input name="note" required></label>
+      <label>Bring it back for review in <input name="days" type="number" min="0" value="{{ default_days }}" class="short"> days
+        <span class="muted">(0 = never)</span></label>
+      <button>Suppress</button>
+    </form>
+  </details>
+  {% else %}
+  {% if f.status == "suppressed" %}
+  <p class="muted small">{{ (f.suppression_reason or "")|replace("_", " ")|capitalize }} by {{ f.suppressed_by }}:
+    {{ f.suppression_note }} · {{ "until " ~ when(f.suppressed_until) if f.suppressed_until else "permanent" }}</p>
+  {% endif %}
+  <form method="post" action="/findings/{{ f.id }}/reopen"><button>Reopen</button></form>
+  {% endif %}
+</article>
+{% else %}
+<p class="muted">No {{ status }} findings.</p>
+{% endfor %}
+
+<h2>Scans</h2>
+<table>
+  <thead><tr><th>#</th><th>Result</th><th>Version</th><th>Finished</th></tr></thead>
+  <tbody>
+  {% for s in scans %}
+    <tr>
+      <td><a href="/scans/{{ s.id }}">{{ s.id }}</a></td>
+      <td>{{ result(s, progress.get(s.id)) }}</td>
+      <td class="small">{{ s.ref or "" }} {{ (s.commit_sha or "")[:10] }}</td>
+      <td>{{ when(s.finished_at) }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4" class="muted">No scans yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<p class="muted small">Export: <a href="/targets/{{ target.id }}/export.json">JSON</a>
+  (findings, scans{{ ", Barkley's reports" if target.profile == "ha" }}) ·
+  <a href="/targets/{{ target.id }}/export.sarif">SARIF</a> (for GitHub code scanning, DefectDojo and the like)</p>
+{% endblock %}

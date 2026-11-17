@@ -1,0 +1,27 @@
+# Hosts the runner may reach (port 443 only), one per line. "example.com" allows that host only;
+# ".example.com" allows it and every subdomain. Add your own with EXTRA_ALLOWED_DOMAINS
+# (comma-separated, same syntax), e.g. a self-hosted Gitea or GitLab.
+
+# GitHub: clones, release archives, API
+github.com
+api.github.com
+codeload.github.com
+.githubusercontent.com
+
+# Python and npm package metadata and files (dependency checks; nothing is installed)
+pypi.org
+files.pythonhosted.org
+registry.npmjs.org
+wheels.home-assistant.io
+
+# Advisory databases
+api.osv.dev
+api.deps.dev
+osv-vulnerabilities.storage.googleapis.com
+
+# Semgrep registry rules
+semgrep.dev
+
+# Trivy's check bundle
+ghcr.io
+mirror.gcr.io

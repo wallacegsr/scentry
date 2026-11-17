@@ -1,0 +1,111 @@
+"""SARIF 2.1.0 -> RawFinding. Everything in a SARIF file is untrusted text."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from scentry.models import SEVERITY_RANK
+
+if TYPE_CHECKING:
+    from scentry.scanners.base import RawFinding
+
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f​-‏‪-‮⁦-⁩]")
+_LEVELS = {"error": "high", "warning": "medium", "note": "low", "none": "info"}
+_MAX_LINE_FILE = 2_000_000
+
+
+def clean(text: Any, limit: int) -> str:
+    text = _CONTROL.sub("", str(text or "")).strip()
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _text(node: Any) -> str:
+    return (node or {}).get("text", "") if isinstance(node, dict) else ""
+
+
+def _severity(result: dict, rule: dict, floor: str | None) -> str:
+    sev = None
+    for props in (result.get("properties"), rule.get("properties")):
+        try:
+            score = float((props or {}).get("security-severity"))
+        except (TypeError, ValueError):
+            continue
+        sev = (
+            "critical" if score >= 9 else "high" if score >= 7 else "medium" if score >= 4
+            else "low" if score > 0 else "info"
+        )  # fmt: skip
+        break
+    if sev is None:
+        level = result.get("level") or (rule.get("defaultConfiguration") or {}).get("level")
+        sev = _LEVELS.get(level or "warning", "medium")
+    if floor and SEVERITY_RANK[floor] < SEVERITY_RANK[sev]:
+        sev = floor
+    return sev
+
+
+def _line_from(tree: Path | None, file: str | None, line: int | None) -> str:
+    """The source line a finding points at, if it is safely inside the tree."""
+    if not (tree and file and line):
+        return ""
+    try:
+        path = (tree / file).resolve()
+        if not path.is_relative_to(tree.resolve()) or not path.is_file():
+            return ""
+        if path.stat().st_size > _MAX_LINE_FILE:
+            return ""
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for number, text in enumerate(fh, 1):
+                if number == line:
+                    return text
+    except OSError:
+        pass
+    return ""
+
+
+def parse(
+    doc: dict, scanner: str, tree: Path | None = None, *, floor: str | None = None
+) -> list[RawFinding]:
+    from scentry.scanners.base import RawFinding
+
+    out: list[RawFinding] = []
+    for run in doc.get("runs") or []:
+        rules = ((run.get("tool") or {}).get("driver") or {}).get("rules") or []
+        by_id = {r.get("id"): r for r in rules if isinstance(r, dict)}
+        for res in run.get("results") or []:
+            index = res.get("ruleIndex")
+            rule = rules[index] if isinstance(index, int) and 0 <= index < len(rules) else None
+            rule_id = res.get("ruleId") or (rule or {}).get("id") or "unknown"
+            rule = rule or by_id.get(rule_id) or {}
+
+            file = line = None
+            snippet = ""
+            locations = res.get("locations") or []
+            if locations:
+                phys = (locations[0] or {}).get("physicalLocation") or {}
+                uri = (phys.get("artifactLocation") or {}).get("uri") or ""
+                file = re.sub(r"^file://", "", uri).lstrip("/") or None
+                region = phys.get("region") or {}
+                line = region.get("startLine") if isinstance(region.get("startLine"), int) else None
+                snippet = _text(region.get("snippet"))
+            fps = res.get("partialFingerprints") or res.get("fingerprints") or {}
+            # Semgrep without an account writes this placeholder instead of an id.
+            fps = {k: v for k, v in fps.items() if v and v != "requires login"}
+            title = _text(rule.get("shortDescription")) or rule.get("name") or rule_id
+            hint = "|".join(f"{k}={fps[k]}" for k in sorted(fps)) if fps else None
+
+            out.append(
+                RawFinding(
+                    scanner=scanner,
+                    rule_id=clean(rule_id, 300),
+                    title=clean(title, 300),
+                    severity=_severity(res, rule, floor),
+                    message=clean(_text(res.get("message")), 2000),
+                    file=clean(file, 1000) or None,
+                    line=line,
+                    evidence=clean(snippet or _line_from(tree, file, line), 500) or None,
+                    fingerprint_hint=hint,
+                )
+            )
+    return out

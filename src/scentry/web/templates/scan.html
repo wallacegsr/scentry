@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% from "_macros.html" import result, when %}
+{% block title %}Scan {{ scan.id }} · Scentry{% endblock %}
+{% block main %}
+<p><a href="/targets/{{ target.id }}">← {{ target.name }}</a></p>
+<h1>Scan {{ scan.id }}</h1>
+<p>{{ result(scan, progress.get(scan.id)) }}</p>
+<p class="muted">{{ scan.ref or "" }} {{ scan.commit_sha or "" }} · queued {{ when(scan.queued_at) }} · finished {{ when(scan.finished_at) }}</p>
+{% if scan.error %}<p class="error">{{ scan.error }}</p>{% endif %}
+{% if scan.notice %}<p class="muted small">Notification: {{ {"sent": "sent", "quiet": "nothing worth one", "stale": "not sent, finished too long before the notifier saw it"}.get(scan.notice, scan.notice) }}</p>{% endif %}
+
+<h2>Scanners</h2>
+<table>
+  <thead><tr><th>Scanner</th><th>State</th><th>Findings</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for r in scan.scanner_runs %}
+    <tr>
+      <td>{{ r.name }}</td>
+      <td><span class="tag {{ 'bad' if r.state in ('error', 'skipped') else '' }}">{{ r.state.replace("_", " ") }}</span></td>
+      <td>{{ r.findings }}</td>
+      <td class="small">{{ r.detail }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4" class="muted">No scanner has run.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
