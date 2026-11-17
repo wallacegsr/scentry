@@ -5,7 +5,7 @@ no alembic_version table; scentry.db.migrate() stamps it at this revision instea
 running it. Never change this file: databases out there are recorded as having it.
 
 Revision ID: 0001
-Revises: None
+Revises: nothing
 Created: 2026-11-17 12:24:16.063323
 """
 

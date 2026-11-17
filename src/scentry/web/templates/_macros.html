@@ -9,4 +9,13 @@
   {%- endif -%}
 {%- endmacro %}
 
+{# A yes/no setting that can also be left to the default (blank). #}
+{% macro choice(name, value, default) -%}
+<select name="{{ name }}">
+  <option value="">default{% if default is not none %} ({{ "on" if default else "off" }}){% endif %}</option>
+  <option value="on" {% if value is sameas true %}selected{% endif %}>on</option>
+  <option value="off" {% if value is sameas false %}selected{% endif %}>off</option>
+</select>
+{%- endmacro %}
+
 {% macro when(dt) -%}{{ dt.strftime("%Y-%m-%d %H:%M") ~ " UTC" if dt else "–" }}{%- endmacro %}

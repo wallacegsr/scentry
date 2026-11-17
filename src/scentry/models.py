@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 from typing import Any
 
-from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 PROFILES = ("owned", "ha")
@@ -49,6 +49,14 @@ class Target(Base):
     available_version: Mapped[str | None] = mapped_column(String(100), default=None)
     hacs_seen_at: Mapped[datetime.datetime | None] = mapped_column(default=None)
     hacs_removed_at: Mapped[datetime.datetime | None] = mapped_column(default=None)
+
+    # Notifications about this target. Muted: none at all. The rest override the
+    # notifier's SCENTRY_NOTIFY_* defaults; None = use the default.
+    notify_muted: Mapped[bool] = mapped_column(default=False, server_default=false())
+    notify_score_below: Mapped[int | None] = mapped_column(default=None)  # ha
+    notify_min_severity: Mapped[str | None] = mapped_column(String(10), default=None)  # owned
+    notify_clean_updates: Mapped[bool | None] = mapped_column(default=None)  # ha, installed
+    notify_failures: Mapped[bool | None] = mapped_column(default=None)
 
     @property
     def update_offered(self) -> bool:
@@ -166,3 +174,6 @@ class NotifyState(Base):
     # The Home Assistant sync has been failing since then; alerted once per outage.
     hass_failing_since: Mapped[datetime.datetime | None] = mapped_column(default=None)
     hass_alerted: Mapped[bool] = mapped_column(default=False)
+    # The notifier's SCENTRY_NOTIFY_* defaults, for the portal to show next to each
+    # target's overrides (the portal isn't given those settings). No secrets.
+    defaults: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)

@@ -15,6 +15,8 @@ What is announced:
 - my code: findings at SCENTRY_NOTIFY_MIN_SEVERITY or above that a scan found or reopened;
 - a target whose scans start failing, and a Home Assistant sync failing for 30 minutes.
 
+Each target can be muted, or override any of those settings, on its page in the portal.
+
 Text that comes from scanned code (names, paths, rule titles) is cut down to a plain
 character set before it goes into a message, so it can't carry mentions, markup or links.
 This service holds the notification URLs (they contain secrets) and nothing else does.
@@ -77,6 +79,41 @@ class Item:
     at: datetime.datetime | None = None  # when it happened, for the digest's deadline
 
 
+@dataclass(frozen=True)
+class Rules:
+    """What gets a message, for one target: the SCENTRY_NOTIFY_* defaults with that
+    target's own settings on top."""
+
+    score_below: int  # ha: a verdict under this
+    min_severity: str  # owned: findings this bad or worse
+    clean_updates: bool  # ha: every offered update, the fine ones too
+    failures: bool  # scans starting to fail
+
+    @classmethod
+    def defaults(cls, settings: Settings) -> Rules:
+        return cls(settings.notify_score_below, settings.notify_min_severity,
+                   settings.notify_clean_updates, settings.notify_failures)  # fmt: skip
+
+    def for_target(self, target: Target) -> Rules | None:
+        """None when the target is muted."""
+        if target.notify_muted:
+            return None
+
+        def pick(own, default):
+            return default if own is None else own
+
+        return Rules(
+            pick(target.notify_score_below, self.score_below),
+            pick(target.notify_min_severity, self.min_severity),
+            pick(target.notify_clean_updates, self.clean_updates),
+            pick(target.notify_failures, self.failures),
+        )
+
+    def as_dict(self) -> dict:
+        return {"score_below": self.score_below, "min_severity": self.min_severity,
+                "clean_updates": self.clean_updates, "failures": self.failures}  # fmt: skip
+
+
 def state_row(session: Session) -> NotifyState:
     row = session.get(NotifyState, 1)
     if row is None:
@@ -133,8 +170,8 @@ def _barkley_lines(scan: Scan) -> list[str]:
     return lines
 
 
-def _failed(session: Session, scan: Scan, settings: Settings) -> Item | None:
-    if not settings.notify_failures:
+def _failed(session: Session, scan: Scan, rules: Rules) -> Item | None:
+    if not rules.failures:
         return None
     previous = session.scalar(
         select(Scan)
@@ -153,9 +190,9 @@ def _failed(session: Session, scan: Scan, settings: Settings) -> Item | None:
                 [safe(why, 200)], scan.id, scan.finished_at)  # fmt: skip
 
 
-def _ha(session: Session, scan: Scan, settings: Settings) -> Item | None:
+def _ha(session: Session, scan: Scan, rules: Rules) -> Item | None:
     target, score = scan.target, scan.score
-    threshold = settings.notify_score_below
+    threshold = rules.score_below
     bad = score < threshold
     installed = target.origin == "hacs" and target.hacs_removed_at is None
     what = f"{_label(target)} {safe(scan.ref, 40)}" if scan.ref else _label(target)
@@ -163,7 +200,7 @@ def _ha(session: Session, scan: Scan, settings: Settings) -> Item | None:
     if installed and target.update_offered and scan.ref == target.available_version:
         current = _scored(session, target.id, ref=target.installed_version)
         worse = current is not None and score <= current.score - REGRESSION
-        if not (bad or worse or settings.notify_clean_updates):
+        if not (bad or worse or rules.clean_updates):
             return None
         vs = (f"; installed {safe(target.installed_version, 40)} scored {_result(current)}"
               if current else "")  # fmt: skip
@@ -190,8 +227,8 @@ def _ha(session: Session, scan: Scan, settings: Settings) -> Item | None:
                 _barkley_lines(scan), scan.id, scan.finished_at)  # fmt: skip
 
 
-def _owned(session: Session, scan: Scan, settings: Settings) -> Item | None:
-    floor = SEVERITY_RANK[settings.notify_min_severity]
+def _owned(session: Session, scan: Scan, rules: Rules) -> Item | None:
+    floor = SEVERITY_RANK[rules.min_severity]
     new = [
         f for f in session.scalars(select(Finding).where(
             Finding.target_id == scan.target_id, Finding.opened_scan_id == scan.id,
@@ -214,12 +251,15 @@ def _owned(session: Session, scan: Scan, settings: Settings) -> Item | None:
 
 
 def evaluate(session: Session, scan: Scan, settings: Settings) -> Item | None:
-    """What, if anything, to say about one finished scan."""
+    """What, if anything, to say about one finished scan, by its target's rules."""
+    rules = Rules.defaults(settings).for_target(scan.target)
+    if rules is None:
+        return None  # muted
     if scan.status == "failed" or scan.score is None:
-        return _failed(session, scan, settings)
+        return _failed(session, scan, rules)
     if scan.target.profile == "ha":
-        return _ha(session, scan, settings)
-    return _owned(session, scan, settings)
+        return _ha(session, scan, rules)
+    return _owned(session, scan, rules)
 
 
 def collect(session: Session, settings: Settings, now: datetime.datetime) -> list[Item]:
@@ -417,6 +457,7 @@ def main(settings: Settings | None = None) -> None:
         state = state_row(session)
         state.services, state.invalid_urls, state.seen_at = (
             sender.services, sender.invalid, utcnow())  # fmt: skip
+        state.defaults = Rules.defaults(settings).as_dict()  # shown in the portal
         state.failures = 0  # new settings, perhaps: try straight away, not after a backoff
         session.commit()
     if not sender.services:

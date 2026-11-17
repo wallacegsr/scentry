@@ -111,6 +111,11 @@ def target_dict(session: Session, target: Target, *, scans: int = SCANS_PER_TARG
         "uninstalled_at": _iso(target.hacs_removed_at),
         "interval_hours": target.interval_hours,
         "enabled": target.enabled,
+        # This target's own notification settings; null = the notifier's default.
+        "notify": {"muted": target.notify_muted, "score_below": target.notify_score_below,
+                   "min_severity": target.notify_min_severity,
+                   "clean_updates": target.notify_clean_updates,
+                   "failures": target.notify_failures},  # fmt: skip
         "result": scan_dict(latest, report=reports) if latest else None,
         # What the grade counts (my code): open findings folded into problems.
         "grade_issues": [

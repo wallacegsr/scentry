@@ -15,6 +15,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
+from sqlalchemy.orm import Session
 
 from scentry import db
 from scentry.models import Base, Target
@@ -59,17 +60,24 @@ def test_fresh_database_matches_the_models(engine):
 
 
 def test_database_from_before_migrations_is_adopted(engine):
-    from sqlalchemy.orm import Session
+    from alembic import command
 
-    Base.metadata.create_all(engine)  # how every database was made up to 131364f
-    with Session(engine) as s:
-        s.add(Target(name="kept", profile="ha", source="a/b"))
-        s.commit()
+    # A database as create_all made it up to 131364f: the baseline's tables, no record
+    # of any migration. (Today's models have more; this is the old schema.)
+    cfg = db._config()
+    with engine.begin() as conn:
+        cfg.attributes["connection"] = conn
+        command.upgrade(cfg, db.BASELINE)
+        conn.execute(text("DROP TABLE alembic_version"))
+        conn.execute(text("INSERT INTO targets (name, profile, source, interval_hours, "
+                          "enabled, created_at, origin) VALUES ('kept', 'ha', 'a/b', 168, "
+                          "true, CURRENT_TIMESTAMP, 'manual')"))  # fmt: skip
     db.migrate(engine)
     assert _version(engine) == _head()
     assert _drift(engine) == []
     with Session(engine) as s:
-        assert s.query(Target).one().name == "kept"
+        kept = s.query(Target).one()
+        assert kept.name == "kept" and kept.notify_muted is False  # new columns filled in
 
 
 def test_services_starting_together_migrate_once(engine):

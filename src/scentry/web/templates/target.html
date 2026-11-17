@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import result, when %}
+{% from "_macros.html" import choice, result, when %}
 {% block title %}{{ target.name }} · Scentry{% endblock %}
 {% block main %}
 <h1>{{ target.name }}</h1>
@@ -16,6 +16,39 @@
 
 <div class="row">
   <form method="post" action="/targets/{{ target.id }}/scan"><button>Scan now</button></form>
+  {% set own = target.notify_score_below is not none or target.notify_min_severity
+               or target.notify_clean_updates is not none or target.notify_failures is not none %}
+  <details>
+    <summary>Notifications{% if target.notify_muted %}: muted{% elif own %}: its own settings{% endif %}</summary>
+    <form method="post" action="/targets/{{ target.id }}/notify" class="stack">
+      {% if not notifier or not notifier.services %}
+      <p class="muted small">Notifications are off: the notify service has no SCENTRY_NOTIFY_URLS.
+        These settings apply once it has.</p>
+      {% endif %}
+      <label class="check"><input type="checkbox" name="muted" value="on" {% if target.notify_muted %}checked{% endif %}>
+        Mute: no messages about this target at all</label>
+      {% if target.profile == "ha" %}
+      <label>When a version scores under
+        <span><input name="score_below" type="number" min="1" max="100" class="short"
+          value="{{ target.notify_score_below if target.notify_score_below is not none else '' }}"
+          placeholder="{{ defaults.get('score_below', '') }}">
+        <span class="muted small">blank: the default{% if defaults %} ({{ defaults.score_below }}){% endif %}</span></span></label>
+      {% if target.origin == "hacs" %}
+      <label>Every offered update, the fine ones too
+        {{ choice("clean_updates", target.notify_clean_updates, defaults.get("clean_updates")) }}</label>
+      {% endif %}
+      {% else %}
+      <label>New findings this bad or worse
+        <select name="min_severity">
+          <option value="">default{% if defaults %} ({{ defaults.min_severity }}){% endif %}</option>
+          {% for s in severities %}<option value="{{ s }}" {% if target.notify_min_severity == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+        </select></label>
+      {% endif %}
+      <label>When its scans start failing
+        {{ choice("failures", target.notify_failures, defaults.get("failures")) }}</label>
+      <button>Save</button>
+    </form>
+  </details>
   <details>
     <summary>Remove</summary>
     <form method="post" action="/targets/{{ target.id }}/delete">

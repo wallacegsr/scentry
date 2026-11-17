@@ -158,6 +158,39 @@ def test_notifier_status_and_test_button(client):
     assert "Test requested" in client.get("/", auth=AUTH).text
 
 
+def test_notification_settings_per_target(client):
+    from scentry.models import NotifyState
+
+    client.post("/targets", auth=AUTH, data={"profile": "ha", "source": "a/b"})
+    with db.SessionLocal() as s:
+        s.add(NotifyState(id=1, services=1, defaults={"score_below": 70, "min_severity": "high",
+                                                      "clean_updates": False, "failures": True}))
+        s.commit()
+    page = client.get("/targets/1", auth=AUTH).text
+    assert "blank: the default (70)" in page and "default (on)" in page
+    assert "Notifications:" not in page  # nothing set yet
+
+    form = {"score_below": "85", "failures": "off", "clean_updates": "", "min_severity": ""}
+    assert client.post("/targets/1/notify", auth=AUTH, data=form).status_code == 303
+    with db.SessionLocal() as s:
+        t = s.get(Target, 1)
+        assert (t.notify_muted, t.notify_score_below, t.notify_failures,
+                t.notify_clean_updates) == (False, 85, False, None)  # fmt: skip
+    assert "Notifications: its own settings" in client.get("/targets/1", auth=AUTH).text
+
+    client.post("/targets/1/notify", auth=AUTH, data={"muted": "on"})  # the rest back to default
+    with db.SessionLocal() as s:
+        t = s.get(Target, 1)
+        assert (t.notify_muted, t.notify_score_below, t.notify_failures) == (True, None, None)
+    assert "Notifications: muted" in client.get("/targets/1", auth=AUTH).text
+
+    for bad in ({"score_below": "0"}, {"score_below": "abc"}, {"min_severity": "info"}):
+        assert client.post("/targets/1/notify", auth=AUTH, data=bad).status_code == 400
+    r = client.post("/targets/1/notify", auth=AUTH, data={"muted": "on"},
+                    headers={"Sec-Fetch-Site": "cross-site"})  # fmt: skip
+    assert r.status_code == 403
+
+
 def _owned_with_findings():
     from scentry.models import utcnow
 

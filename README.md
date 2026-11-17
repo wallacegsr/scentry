@@ -176,6 +176,10 @@ What gets a message:
 | My code: new or reopened findings at `SCENTRY_NOTIFY_MIN_SEVERITY` or worse | high |
 | A target's scans start failing; the Home Assistant sync fails for 30 minutes | on |
 
+These are the defaults. A target's page has **Notifications**, where it can be muted or
+given its own threshold, severity, offered-update and failure settings; anything left
+blank follows the default.
+
 A result is announced once: a weekly rescan with the same verdict stays quiet, unless
 the score drops 10 points (a new advisory, say). Messages are digests. The notifier
 waits for the scan queue to drain, for no longer than 15 minutes, so the first sync of
@@ -270,7 +274,6 @@ Postgres too, as CI does.
 
 ## Not built yet
 
-- Notification settings per target (today they are global).
 - "What would updating change?" (Barkley's `diff`) and the daily advisory re-check.
 - Searching the Marketplace catalog from the portal.
 - Merging the same vulnerability reported under different ids (CVE / GHSA).

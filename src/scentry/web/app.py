@@ -24,6 +24,7 @@ from scentry.config import Settings, get_settings
 from scentry.findings import DEFAULT_SUPPRESSION_DAYS, SUPPRESSION_REASONS
 from scentry.models import (
     PROFILES,
+    SEVERITIES,
     SEVERITY_RANK,
     Finding,
     HassSync,
@@ -327,7 +328,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 select(Finding).where(Finding.target_id == target.id,
                                       Finding.status == "open")).all()  # fmt: skip
             why = findings.issues(open_now)
+        notifier = session.get(NotifyState, 1)
         return page(request, "target.html", target=target, findings=found, counts=counts,
+                    notifier=notifier, defaults=(notifier.defaults if notifier else None) or {},
+                    severities=SEVERITIES[:-1],
                     status=status, scans=target.scans[:10], progress=live, why=why,
                     deducted=sum(i.deduction for i in why or []),
                     latest=next((s for s in target.scans if s.status == "done"), None),
@@ -339,6 +343,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def scan_now(target_id: int, session: Session = session_dep, user: str = user_dep):
         target = get_target(session, target_id)
         worker.enqueue(session, target, target.ref)
+        return RedirectResponse(f"/targets/{target_id}", 303)
+
+    @app.post("/targets/{target_id}/notify")
+    def target_notify(
+        target_id: int,
+        muted: str = Form(""),
+        score_below: str = Form(""),
+        min_severity: str = Form(""),
+        clean_updates: str = Form(""),
+        failures: str = Form(""),
+        session: Session = session_dep,
+        user: str = user_dep,
+    ):
+        """Blank means "use the notifier's default"."""
+        target = get_target(session, target_id)
+
+        def choice(value: str) -> bool | None:
+            return {"on": True, "off": False}.get(value)
+
+        score = score_below.strip()
+        if score and not (score.isdigit() and 1 <= int(score) <= 100):
+            raise HTTPException(400, "The score is a whole number from 1 to 100.")
+        if min_severity and min_severity not in SEVERITIES[:-1]:  # not "info"
+            raise HTTPException(400, "Unknown severity.")
+        target.notify_muted = muted == "on"
+        target.notify_score_below = int(score) if score else None
+        target.notify_min_severity = min_severity or None
+        target.notify_clean_updates = choice(clean_updates)
+        target.notify_failures = choice(failures)
+        session.commit()
         return RedirectResponse(f"/targets/{target_id}", 303)
 
     @app.post("/targets/{target_id}/delete")

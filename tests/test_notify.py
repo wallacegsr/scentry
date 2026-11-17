@@ -167,6 +167,47 @@ def test_failures_announced_when_they_start(session, settings):
     assert notify.evaluate(session, one, settings) is None
 
 
+def test_a_target_overrides_the_defaults(session, settings):
+    t = ha_target(session)
+    kinda = scan(session, t, "1.0.0", 75)  # Kinda Sus: under 70 is the default threshold
+    assert notify.evaluate(session, kinda, settings) is None
+    t.notify_score_below = 90  # this one I want to hear about sooner
+    assert "scores 75, Kinda Sus" in notify.evaluate(session, kinda, settings).text
+    t.notify_muted = True  # ... or not at all
+    assert notify.evaluate(session, kinda, settings) is None
+    assert notify.evaluate(session, scan(session, t, "1.0.0", 10), settings) is None
+    t.notify_muted = False
+    t.notify_failures = False
+    assert notify.evaluate(session, scan(session, t, "1.0.0", status="failed"), settings) is None
+
+    # Every offered update of this one, though the default is only the bad ones.
+    up = ha_target(session, name="Weather", source="a/weather", available_version="2.0.0")
+    scan(session, up, "1.0.0", 95)
+    fine = scan(session, up, "2.0.0", 94)
+    assert notify.evaluate(session, fine, settings) is None
+    up.notify_clean_updates = True
+    assert notify.evaluate(session, fine, settings).head == "Update offered: looks fine"
+
+
+def test_my_code_threshold_per_target(session, settings):
+    t = Target(name="lib", profile="owned", source="https://github.com/me/lib.git")
+    session.add(t)
+    session.commit()
+    s = scan(session, t, None, 97)
+    findings.reconcile(session, t, s, [ScannerRun("semgrep", "ok", findings=[
+        RawFinding("semgrep", "r", "weak hash", "medium", file="h.py")])])  # fmt: skip
+    session.commit()
+    assert notify.evaluate(session, s, settings) is None  # default: high and worse
+    t.notify_min_severity = "medium"
+    assert notify.evaluate(session, s, settings).lines == ["medium: weak hash (semgrep) in h.py"]
+
+
+def test_rules_record_the_defaults_for_the_portal(settings):
+    settings.notify_score_below = 90
+    assert notify.Rules.defaults(settings).as_dict() == {
+        "score_below": 90, "min_severity": "high", "clean_updates": False, "failures": True}
+
+
 def test_collect_marks_quiet_and_stale_and_waits_for_busy_targets(session, settings):
     t = ha_target(session)
     old = scan(session, t, "1.0.0", 20, at=NOW - datetime.timedelta(days=2))
