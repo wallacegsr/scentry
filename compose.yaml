@@ -11,7 +11,7 @@ x-hardening: &hardening
 
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:a77aa70e641402a21411b92b721c58d10f23b50ae5fdd2333efd22d166e1e5f7
     restart: unless-stopped
     environment:
       POSTGRES_DB: scentry

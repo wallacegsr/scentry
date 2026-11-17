@@ -4,20 +4,45 @@
 #   --target runner  the app plus every scanner; this is the one that reads hostile code
 #
 # Debian, not Alpine: Semgrep and GuardDog ship manylinux wheels only, and nothing here
-# is compiled. Python 3.13 because Barkley needs it.
-ARG PYTHON_IMAGE=python:3.13-slim-trixie
+# is compiled. Python 3.13 because Barkley needs it. Base images are pinned by digest
+# (Dependabot moves them); every stage uses the same one.
+
+# --- uv, checked against its sha256 -----------------------------------------------------
+FROM python:3.13-slim-trixie@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS uv
+ARG TARGETARCH
+ARG UV_VERSION=0.13.7
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eu; \
+    case "${TARGETARCH}" in \
+      amd64) arch=x86_64; sha=287491da03f2a785c70fa75b13e1f849918c2f2b5415fe84876b8214eeb792f9 ;; \
+      arm64) arch=aarch64; sha=2d3ec076a0c4c0e8250bb6418c44080828b544f1a3be0b6e46adf9fb6923de45 ;; \
+      *) echo "unsupported architecture '${TARGETARCH}'"; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 3 --retry-all-errors --retry-delay 3 -o /tmp/uv.tgz \
+      "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${arch}-unknown-linux-musl.tar.gz"; \
+    echo "${sha}  /tmp/uv.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/uv.tgz -C /usr/local/bin --strip-components=1 --wildcards '*/uv'; \
+    chmod 0755 /usr/local/bin/uv; rm -f /tmp/uv.tgz
 
 # --- the app itself, in a venv both images copy ----------------------------------------
-FROM ${PYTHON_IMAGE} AS app
+# Its dependencies come from uv.lock, each file checked against the hash recorded there.
+FROM python:3.13-slim-trixie@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS app
+COPY --from=uv /usr/local/bin/uv /usr/local/bin/uv
 WORKDIR /src
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
-RUN python -m venv /opt/scentry \
-    && /opt/scentry/bin/pip install --no-cache-dir --disable-pip-version-check . \
-    && python -m compileall -q /opt/scentry
+ENV UV_PROJECT_ENVIRONMENT=/opt/scentry \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_NO_CACHE=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+RUN uv sync --frozen --no-dev --no-editable --python /usr/local/bin/python3
 
 # --- web -------------------------------------------------------------------------------
-FROM ${PYTHON_IMAGE} AS web
+FROM python:3.13-slim-trixie@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS web
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 COPY --from=app /opt/scentry /opt/scentry
 ENV PATH=/opt/scentry/bin:$PATH \
@@ -29,10 +54,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD ["python", "-c", 
 CMD ["scentry", "web"]
 
 # --- scanner tools, every version pinned -----------------------------------------------
-FROM ${PYTHON_IMAGE} AS tools
+FROM python:3.13-slim-trixie@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS tools
 ARG TARGETARCH
 # Release binaries: bumping a version means updating its sha256 pair below.
-ARG UV_VERSION=0.13.7
 ARG OSV_SCANNER_VERSION=2.7.1
 ARG GITLEAKS_VERSION=8.30.1
 ARG TRIVY_VERSION=0.76.2
@@ -48,16 +72,15 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl git \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=uv /usr/local/bin/uv /usr/local/bin/uv
 
 RUN set -eu; \
     case "${TARGETARCH}" in \
-      amd64) uv_arch=x86_64; gl_arch=x64; tv_arch=64bit; \
-        uv_sha=287491da03f2a785c70fa75b13e1f849918c2f2b5415fe84876b8214eeb792f9; \
+      amd64) gl_arch=x64; tv_arch=64bit; \
         osv_sha=fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8; \
         gl_sha=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb; \
         tv_sha=bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf ;; \
-      arm64) uv_arch=aarch64; gl_arch=arm64; tv_arch=ARM64; \
-        uv_sha=2d3ec076a0c4c0e8250bb6418c44080828b544f1a3be0b6e46adf9fb6923de45; \
+      arm64) gl_arch=arm64; tv_arch=ARM64; \
         osv_sha=983d22fbad9724514e3fcc6acc83b5fa64c5ffa6b0d9f510028f22c1b223ff81; \
         gl_sha=e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080; \
         tv_sha=ab9d51f86e6a5fb936f605faff6b593ac51bc378fff4d3e8b9d58358b9c367c3 ;; \
@@ -65,14 +88,12 @@ RUN set -eu; \
     esac; \
     get() { curl -fsSL --retry 3 --retry-all-errors --retry-delay 3 -o "$1" "$2"; \
             echo "$3  $1" | sha256sum -c -; }; \
-    get /tmp/uv.tgz "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_arch}-unknown-linux-musl.tar.gz" "${uv_sha}"; \
-    tar -xzf /tmp/uv.tgz -C /usr/local/bin --strip-components=1 --wildcards '*/uv'; \
     get /usr/local/bin/osv-scanner "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_${TARGETARCH}" "${osv_sha}"; \
     get /tmp/gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${gl_arch}.tar.gz" "${gl_sha}"; \
     tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks; \
     get /tmp/trivy.tgz "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${tv_arch}.tar.gz" "${tv_sha}"; \
     tar -xzf /tmp/trivy.tgz -C /usr/local/bin trivy; \
-    chmod 0755 /usr/local/bin/uv /usr/local/bin/osv-scanner /usr/local/bin/gitleaks /usr/local/bin/trivy; \
+    chmod 0755 /usr/local/bin/osv-scanner /usr/local/bin/gitleaks /usr/local/bin/trivy; \
     rm -f /tmp/*.tgz
 
 ENV UV_TOOL_DIR=/opt/tools \
@@ -89,7 +110,7 @@ RUN uv tool install "git+https://github.com/SeriesOfTubez/ha-barkley@${BARKLEY_C
     && python -m compileall -q /opt/tools || true
 
 # --- runner ----------------------------------------------------------------------------
-FROM ${PYTHON_IMAGE} AS runner
+FROM python:3.13-slim-trixie@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS runner
 RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/* \

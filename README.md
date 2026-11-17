@@ -217,13 +217,22 @@ or a link in your notifications.
   notification URLs, and it never touches scanned code.
 - **db** is Postgres. SQLite works too (`SCENTRY_DATABASE_URL`), for development.
 
-Every tool version is pinned in `docker/Dockerfile`; release binaries are checked
-against a sha256, and Barkley is installed from an exact commit.
+What goes into the images is pinned:
+
+- Scentry's own Python dependencies, from `uv.lock`: exact versions, every file
+  checked against its recorded hash.
+- Every scanner's version, in `docker/Dockerfile`. Release binaries are checked against
+  a sha256, and Barkley is installed from an exact commit. (The scanners' own Python
+  dependencies are resolved when the image is built, within what each scanner allows.)
+- The base images, by digest. The GitHub Actions that build them, by commit.
+
+Dependabot proposes updates to all of these weekly, and the tests run on each before
+anything is published.
 
 ## Development
 
 ```sh
-python -m venv .venv && .venv/bin/pip install -e ".[dev]"
+uv sync --extra dev                                  # from uv.lock, into .venv
 .venv/bin/pytest
 SCENTRY_ADMIN_PASSWORD=dev .venv/bin/scentry web      # sqlite, http://127.0.0.1:8080
 .venv/bin/scentry worker                             # scanners must be on PATH
@@ -234,6 +243,9 @@ SCENTRY_ADMIN_PASSWORD=dev .venv/bin/scentry web      # sqlite, http://127.0.0.1
 Adding a scanner: subclass `SarifScanner` in `src/scentry/scanners/tools.py` (a
 command that writes SARIF is all it takes), add it to `PROFILE_SCANNERS`, and install
 the tool in the `tools` stage of `docker/Dockerfile`.
+
+Changing dependencies: edit `pyproject.toml`, then `uv lock`; CI fails if `uv.lock`
+is out of date. (`pip install -e ".[dev]"` works too, without the lock.)
 
 Changing the database: edit `src/scentry/models.py`, then
 `.venv/bin/scentry new-migration "what changed"` writes a migration to
@@ -250,7 +262,8 @@ Postgres too, as CI does.
 - Merging the same vulnerability reported under different ids (CVE / GHSA).
 - Scanning on new commits; scans run on a per-target interval.
 - Optional AI review and explanations.
-- A lockfile with hashes for this app's own Python dependencies.
+- Hash-locked Python dependencies for the scanners themselves (their own versions are
+  pinned).
 - arm64 images (a Raspberry Pi can build its own with `compose.build.yaml`), and
   signed images.
 
