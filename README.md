@@ -61,12 +61,26 @@ docker compose up -d
 Open <http://127.0.0.1:8080> and sign in as `admin`.
 
 The images are built by this repository's GitHub Actions and published to
-`ghcr.io/wallacegsr/scentry-{web,runner,egress}` (amd64): `latest` is the newest build
-of `main`, and `SCENTRY_VERSION` pins another. To build them yourself instead:
+`ghcr.io/wallacegsr/scentry-{web,runner,egress}`, for amd64 and arm64: `latest` is the
+newest build of `main`, and `SCENTRY_VERSION` pins another. To build them yourself
+instead:
 
 ```sh
 docker compose -f compose.yaml -f compose.build.yaml up -d --build
 ```
+
+Each image is signed with [cosign](https://docs.sigstore.dev/cosign/) (keyless: the
+signature is bound to this repository's workflow, so there's no key to steal) and
+carries a build provenance attestation. To check one before you run it:
+
+```sh
+cosign verify ghcr.io/wallacegsr/scentry-runner:latest \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/wallacegsr/scentry/\.github/workflows/images\.yml@refs/(heads/main|tags/v.+)$'
+gh attestation verify oci://ghcr.io/wallacegsr/scentry-runner:latest -R wallacegsr/scentry
+```
+
+Docker, Portainer and Watchtower don't check signatures themselves.
 
 **Portainer:** Stacks → Add stack → Repository, point it at this repository with
 compose path `compose.yaml`, and add the variables from `.env.example` under
@@ -264,8 +278,6 @@ Postgres too, as CI does.
 - Optional AI review and explanations.
 - Hash-locked Python dependencies for the scanners themselves (their own versions are
   pinned).
-- arm64 images (a Raspberry Pi can build its own with `compose.build.yaml`), and
-  signed images.
 
 ## Credits
 
