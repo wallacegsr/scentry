@@ -51,6 +51,8 @@ def finding_dict(f: Finding) -> dict[str, Any]:
         "file": f.file,
         "line": f.line,
         "evidence": f.evidence,
+        "vulnerabilities": f.vulns,  # {"package", "groups": [[id, alias...], ...]}
+        "same_as": f.same_as,  # repeats this finding's vulnerabilities: counted there
         "status": f.status,
         "first_seen_at": _iso(f.first_seen_at),
         "last_seen_at": _iso(f.last_seen_at),

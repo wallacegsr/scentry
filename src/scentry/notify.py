@@ -286,6 +286,7 @@ def _owned(session: Session, scan: Scan, rules: Rules) -> Item | None:
             Finding.target_id == scan.target_id, Finding.opened_scan_id == scan.id,
             Finding.status == "open"))
         if SEVERITY_RANK.get(f.severity, 9) <= floor
+        and f.same_as is None  # a vulnerability another finding already reports
     ]  # fmt: skip
     if not new:
         return None

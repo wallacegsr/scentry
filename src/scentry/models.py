@@ -143,6 +143,11 @@ class Finding(Base):
     file: Mapped[str | None] = mapped_column(String(1000), default=None)
     line: Mapped[int | None] = mapped_column(default=None)
     evidence: Mapped[str | None] = mapped_column(Text, default=None)  # untrusted text
+    # A known vulnerability's ids, grouped per vulnerability, and its package (RawFinding).
+    vulns: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    # Reports only vulnerabilities that finding already reports (another scanner, or
+    # another id for the same one): shown, but counted and announced once, there.
+    same_as: Mapped[int | None] = mapped_column(default=None)
 
     status: Mapped[str] = mapped_column(String(20), default="open", index=True)
     first_seen_at: Mapped[datetime.datetime] = mapped_column(default=utcnow)

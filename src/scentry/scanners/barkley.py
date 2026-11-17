@@ -193,10 +193,27 @@ def barkley_python() -> str | None:
     return python if Path(python).is_file() else None
 
 
+def _vulns(f: dict) -> dict | None:
+    """A dependency finding's advisories (one finding per package, any number of
+    advisories, each with its aliases), for merging with osv-scanner's findings."""
+    dep = f.get("dependency") if isinstance(f.get("dependency"), dict) else {}
+    groups = []
+    for a in dep.get("advisories") or []:
+        if not isinstance(a, dict):
+            continue
+        aliases = a.get("aliases") if isinstance(a.get("aliases"), list) else []
+        if found := sarif.vulns([a.get("id"), *aliases]):
+            groups += found["groups"]
+    if not groups:
+        return None
+    return {"package": sarif.clean(dep.get("package"), 200) or None, "groups": groups[:50]}
+
+
 def _finding(f: dict) -> RawFinding:
     severity = str(f.get("severity") or "medium").lower()
     line = f.get("line")
     return RawFinding(
+        vulns=_vulns(f),
         scanner="barkley",
         rule_id=sarif.clean(f.get("rule_id") or "unknown", 300),
         title=sarif.clean(f.get("title") or f.get("rule_id"), 300),

@@ -376,7 +376,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         found = session.scalars(
             select(Finding).where(Finding.target_id == target.id, Finding.status == status)
         ).all()
-        found.sort(key=lambda f: (SEVERITY_RANK.get(f.severity, 9), f.scanner, f.file or ""))
+        found.sort(key=lambda f: (f.same_as is not None, SEVERITY_RANK.get(f.severity, 9),
+                                  f.scanner, f.file or ""))  # fmt: skip
+        twin_of = {f.id: f for f in session.scalars(select(Finding).where(
+            Finding.id.in_({f.same_as for f in found if f.same_as is not None})))}  # fmt: skip
         why = None
         if target.profile == "owned":
             open_now = found if status == "open" else session.scalars(
@@ -385,6 +388,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             why = findings.issues(open_now)
         notifier = session.get(NotifyState, 1)
         return page(request, "target.html", target=target, findings=found, counts=counts,
+                    twin_of=twin_of,
                     notifier=notifier, defaults=(notifier.defaults if notifier else None) or {},
                     severities=SEVERITIES[:-1],
                     status=status, scans=target.scans[:10], progress=live, why=why,

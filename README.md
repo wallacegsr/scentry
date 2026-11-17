@@ -48,6 +48,13 @@ worse severity. An open critical caps the grade at D, an open high at B, and an
 incomplete scan at B. A is 90+, B 80+, C 70+, D 60+. The target's page shows the
 arithmetic, and its JSON export lists the problems.
 
+One vulnerability is one problem, whatever it is called. osv-scanner names it by its
+CVE, Barkley (for a repository that holds an HA integration) by its GHSA, in one finding
+per package; every alias either lists links the names. A finding that only repeats
+vulnerabilities another finding reports is marked **same vulnerability** on the
+target's page: it is counted, and announced, once. Suppressing a vulnerability under one
+name covers its other names too.
+
 ## Install
 
 You need Docker with Compose, about 3 GB of disk for the images, and 4 GB of memory
@@ -304,7 +311,6 @@ Postgres too, as CI does.
 
 ## Not built yet
 
-- Merging the same vulnerability reported under different ids (CVE / GHSA).
 - Scanning on new commits; scans run on a per-target interval.
 - Optional AI review and explanations.
 - Hash-locked Python dependencies for the scanners themselves (their own versions are

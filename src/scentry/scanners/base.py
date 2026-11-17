@@ -25,6 +25,10 @@ class RawFinding:
     line: int | None = None
     evidence: str | None = None  # untrusted: text from the scanned code
     fingerprint_hint: str | None = None  # the scanner's own stable id, if it has one
+    # A known vulnerability: {"package": name or None, "groups": [[id, alias, ...], ...]},
+    # one group per vulnerability it reports. How findings of one vulnerability under
+    # different ids (CVE, GHSA, PYSEC...) are told to be the same (findings.mark_duplicates).
+    vulns: dict | None = None
 
 
 @dataclass(slots=True)

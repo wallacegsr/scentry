@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from scentry import proc
-from scentry.scanners.base import SarifScanner, ScanContext
+from scentry.scanners.base import SarifScanner, ScanContext, ScannerRun
 
 
 def _has(tree: Path | None, pattern: str) -> bool:
@@ -55,6 +55,16 @@ class OsvScanner(SarifScanner):
 
     def not_applicable(self, res: proc.Result) -> bool:
         return res.returncode == 128  # no package sources found
+
+    def run(self, ctx: ScanContext) -> ScannerRun:
+        run = super().run(ctx)
+        # Its primaryLocationLineHash is computed from the absolute path, which holds the
+        # scan's random work directory. A vulnerability (the rule) in a package in a file
+        # is what stays the same from one scan to the next.
+        for f in run.findings:
+            pkg = (f.vulns or {}).get("package")
+            f.fingerprint_hint = f"package={pkg}" if pkg else None
+        return run
 
 
 class Trivy(SarifScanner):

@@ -94,6 +94,15 @@
 <article class="finding">
   <div><span class="sev {{ f.severity }}">{{ f.severity }}</span> <strong>{{ f.title }}</strong></div>
   <div class="muted small">{{ f.scanner }} · {{ f.rule_id }}{% if f.file %} · {{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}{% endif %}</div>
+  {% if f.same_as is not none %}{% set twin = twin_of.get(f.same_as) %}
+  <p class="small"><span class="tag">same vulnerability</span> Already reported{% if twin %} by {{ twin.scanner }} as
+    <strong>{{ twin.rule_id }}</strong>{% if twin.status != "open" %} ({{ twin.status }}){% endif %}{% endif %}:
+    counted and announced once, there.</p>
+  {% endif %}
+  {% if f.vulns and f.vulns.groups %}
+  <div class="muted small">{% if f.vulns.package %}{{ f.vulns.package }}: {% endif %}
+    {%- for g in f.vulns.groups %}{{ g|join(" = ") }}{{ "; " if not loop.last }}{% endfor %}</div>
+  {% endif %}
   {% if f.message %}<p>{{ f.message }}</p>{% endif %}
   {% if f.evidence %}<pre>{{ f.evidence }}</pre>{% endif %}
   {% if f.status == "open" %}

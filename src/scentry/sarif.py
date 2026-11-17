@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote
 
 from scentry.models import SEVERITY_RANK
 
@@ -19,6 +20,39 @@ _MAX_LINE_FILE = 2_000_000
 def clean(text: Any, limit: int) -> str:
     text = _CONTROL.sub("", str(text or "")).strip()
     return text[:limit] + ("…" if len(text) > limit else "")
+
+
+# Advisory ids: CVE, GitHub, the Python, Go and Rust databases, OSV's own and malicious
+# package reports. A rule named like one of these is a known vulnerability.
+ADVISORY = re.compile(
+    r"^(CVE-\d{4}-\d{4,}|GHSA(-[23456789cfghjmpqrvwx]{4}){3}|PYSEC-\d{4}-\d+|"
+    r"RUSTSEC-\d{4}-\d{4}|GO-\d{4}-\d{4,}|OSV-\d{4}-\d+|MAL-\d{4}-\d+|GSD-\d{4}-\d+)$",
+    re.IGNORECASE,
+)
+_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,59}$")  # any database's id, sanely shaped
+_PACKAGE = re.compile(r"Package '([^'@\s]{1,200}|@[^'@\s]{1,200})@[^'\s]{1,100}'")
+
+
+def vulns(ids: list[Any], package: Any = None) -> dict | None:
+    """One vulnerability's ids as RawFinding.vulns, or None if none is an advisory id."""
+    group = list(dict.fromkeys(str(i).upper() for i in ids if isinstance(i, str) and _ID.match(i)))
+    if not any(ADVISORY.match(i) for i in group):
+        return None
+    pkg = clean(package, 200) or None if package else None
+    return {"package": pkg, "groups": [group[:20]]}
+
+
+def _relative(uri: str, tree: Path | None) -> str:
+    """A result's file, relative to the scanned tree. Some tools (osv-scanner) give the
+    absolute path, which would hold the scan's random work directory and change every
+    finding's fingerprint on every scan."""
+    path = unquote(re.sub(r"^file://", "", uri))
+    if tree is not None:
+        root = tree.resolve().as_posix().rstrip("/") + "/"
+        for candidate in (path, path.lstrip("/")):
+            if candidate.startswith(root):
+                return candidate[len(root):]
+    return path.lstrip("/")
 
 
 def _text(node: Any) -> str:
@@ -85,7 +119,7 @@ def parse(
             if locations:
                 phys = (locations[0] or {}).get("physicalLocation") or {}
                 uri = (phys.get("artifactLocation") or {}).get("uri") or ""
-                file = re.sub(r"^file://", "", uri).lstrip("/") or None
+                file = _relative(str(uri), tree) or None
                 region = phys.get("region") or {}
                 line = region.get("startLine") if isinstance(region.get("startLine"), int) else None
                 snippet = _text(region.get("snippet"))
@@ -94,6 +128,11 @@ def parse(
             fps = {k: v for k, v in fps.items() if v and v != "requires login"}
             title = _text(rule.get("shortDescription")) or rule.get("name") or rule_id
             hint = "|".join(f"{k}={fps[k]}" for k in sorted(fps)) if fps else None
+            message = _text(res.get("message"))
+            aliases = rule.get("deprecatedIds")  # osv-scanner lists a rule's aliases here
+            aliases = aliases if isinstance(aliases, list) else []
+            pkg = _PACKAGE.search(message)
+            vuln = vulns([rule_id, *aliases], pkg[1] if pkg else None)
 
             out.append(
                 RawFinding(
@@ -101,11 +140,12 @@ def parse(
                     rule_id=clean(rule_id, 300),
                     title=clean(title, 300),
                     severity=_severity(res, rule, floor),
-                    message=clean(_text(res.get("message")), 2000),
+                    message=clean(message, 2000),
                     file=clean(file, 1000) or None,
                     line=line,
                     evidence=clean(snippet or _line_from(tree, file, line), 500) or None,
                     fingerprint_hint=hint,
+                    vulns=vuln,
                 )
             )
     return out
