@@ -736,6 +736,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     refresh_what=answering(session), refresh_seconds=REFRESH_SECONDS,
                     here="?", now=now, user=user)  # fmt: skip
 
+    def shared(session: Session, finding_id: int, explain: str) -> dict:
+        """A finding as Markdown, with its AI explanation if one was asked for and there
+        is one."""
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise HTTPException(404)
+        note = ai.note_for(session, "finding", finding.id)
+        if not (note and note.status == "done" and note.result):
+            note = None
+        include = note is not None and explain == "1"
+        scan = session.get(Scan, finding.last_seen_scan_id) if finding.last_seen_scan_id else None
+        body = export.finding_markdown(finding, scan, note if include else None)
+        return {"f": finding, "target": finding.target, "note": note, "include": include,
+                "body": body, "secret": finding.scanner in export.SECRET_SCANNERS}  # fmt: skip
+
+    @app.get("/findings/{finding_id}/share")
+    def share_finding(request: Request, finding_id: int, explain: str = "",
+                      session: Session = session_dep, user: str = user_dep):  # fmt: skip
+        """A finding as Markdown to copy, download, or take to a new GitHub issue."""
+        s = shared(session, finding_id, explain)
+        repo = export.github_repo(s["target"])
+        issue, whole = (export.new_issue_url(repo, export.issue_title(s["f"]), s["body"])
+                        if repo else (None, False))  # fmt: skip
+        return page(request, session, "share.html", tab=category(s["target"]), repo=repo,
+                    issue_url=issue, issue_whole=whole, now=utcnow(), user=user, **s)
+
+    @app.get("/findings/{finding_id}/finding.md")
+    def finding_markdown(finding_id: int, explain: str = "", session: Session = session_dep,
+                         user: str = user_dep):  # fmt: skip
+        s = shared(session, finding_id, explain)
+        return download(s["body"], "text/markdown",
+                        export.filename(f"{s['target'].name}-finding-{finding_id}", "md"))
+
     @app.post("/targets/{target_id}/scan")
     def scan_now(target_id: int, session: Session = session_dep, user: str = user_dep):
         target = get_target(session, target_id)

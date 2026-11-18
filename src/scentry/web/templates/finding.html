@@ -14,6 +14,7 @@
       {% if f.file %}<span class="mono">{{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}</span>{% endif %}</div>
   </div>
   <div class="actions">
+    <a class="btn ghost" href="/findings/{{ f.id }}/share">{{ icon("share", 16) }} Share</a>
     {% if f.status == "open" %}
     <button type="button" class="ghost" popovertarget="suppress">Suppress</button>
     {% else %}

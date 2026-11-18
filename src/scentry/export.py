@@ -5,9 +5,11 @@
 - SARIF 2.1.0: one target's open and suppressed findings, for GitHub code scanning,
   DefectDojo and other tools that import it.
 - CSV: every finding, for a spreadsheet.
+- Markdown: one finding, for a GitHub issue, a security advisory or a message.
 
 Text in findings comes from scanned code. JSON and SARIF carry it as data; CSV cells
-that a spreadsheet would run as a formula are defused.
+that a spreadsheet would run as a formula are defused; in Markdown it can't add
+formatting, links or @mentions.
 """
 
 from __future__ import annotations
@@ -16,14 +18,16 @@ import csv
 import datetime
 import io
 import re
+from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import quote, urlencode
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from scentry import __version__
 from scentry.findings import issues
-from scentry.models import SEVERITY_RANK, Finding, Scan, Target, utcnow
+from scentry.models import SEVERITY_RANK, AiNote, Finding, Scan, Target, utcnow
 
 FORMAT = 1
 SCANS_PER_TARGET = 20
@@ -246,3 +250,141 @@ def findings_csv(session: Session, status: str | None = None,
 def filename(name: str, ext: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-.")[:60] or "target"
     return f"scentry-{slug}-{utcnow():%Y%m%d}.{ext}"
+
+
+# --- Markdown: one finding, for a GitHub issue or a message ---------------------------
+
+ISSUE_URL_MAX = 8000  # GitHub turns much longer addresses away
+SECRET_SCANNERS = {"gitleaks"}  # their excerpt is a secret's line: never put in a report
+REAL = {"likely": "Looks real", "unlikely": "Probably harmless here", "unclear": "Can't tell"}
+LANGUAGES = {".py": "python", ".js": "javascript", ".mjs": "javascript", ".ts": "typescript",
+             ".yaml": "yaml", ".yml": "yaml", ".json": "json", ".sh": "bash", ".toml": "toml",
+             ".html": "html", ".go": "go", ".rs": "rust", ".rb": "ruby", ".php": "php",
+             ".java": "java", ".tf": "hcl"}  # fmt: skip
+_GITHUB_URL = re.compile(r"^https://github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?/?$")
+_REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
+_GHSA = re.compile(r"^GHSA(-[a-z0-9]{4}){3}$")
+_CVE = re.compile(r"^CVE-\d{4}-\d{4,}$")
+_MARKUP = re.compile(r"([\\`*_\[\]<>|~&])")
+WORD_JOINER = "⁠"  # invisible; keeps GitHub from reading @name or #12 as a reference
+
+
+def github_repo(target: Target) -> str | None:
+    """owner/repo when the target's code is on GitHub."""
+    source = (target.source or "").strip()
+    if target.profile == "ha":
+        return source if _REPO.match(source) else None
+    m = _GITHUB_URL.match(source)
+    return m[1] if m else None
+
+
+def md_text(text: object) -> str:
+    """Untrusted prose as Markdown that shows the same text: no formatting, links or
+    HTML, and no @mentions or #references, which GitHub would turn into notifications
+    and links to other people's issues."""
+    out = []
+    for line in str(text or "").replace("\r", "").split("\n"):
+        line = _MARKUP.sub(r"\\\1", line.strip())
+        if re.match(r"\d+[.)]", line):  # a numbered list
+            line = re.sub(r"^(\d+)", r"\1\\", line, count=1)
+        elif line[:1] in ("#", "+", "-", "="):  # a heading, a list, a rule
+            line = "\\" + line
+        line = re.sub(r"@(?=\w)", "@" + WORD_JOINER, line)
+        out.append(re.sub(r"#(?=\d)", "#" + WORD_JOINER, line))
+    return "\n".join(out).strip("\n")
+
+
+def md_code(text: object) -> str:
+    """Untrusted text as one inline code span."""
+    s = " ".join(str(text or "").split())
+    if not s:
+        return ""
+    tick = "`" * (max((len(r) for r in re.findall(r"`+", s)), default=0) + 1)
+    pad = " " if s[0] == "`" or s[-1] == "`" else ""
+    return f"{tick}{pad}{s}{pad}{tick}"
+
+
+def md_block(text: object, language: str = "") -> str:
+    """Untrusted text as a fenced code block it can't close."""
+    s = str(text or "").replace("\r", "").strip("\n")
+    fence = "`" * max(3, max((len(r) for r in re.findall(r"`+", s)), default=0) + 1)
+    return f"{fence}{language}\n{s}\n{fence}"
+
+
+def _language(file: str | None) -> str:
+    if not file:
+        return ""
+    path = PurePosixPath(file)
+    return "dockerfile" if path.name == "Dockerfile" else LANGUAGES.get(path.suffix.lower(), "")
+
+
+def _advisory(vuln_id: object) -> str:
+    v = str(vuln_id)
+    if _GHSA.match(v):
+        return f"[{v}](https://github.com/advisories/{v})"
+    if _CVE.match(v):
+        return f"[{v}](https://www.cve.org/CVERecord?id={v})"
+    return md_code(v)
+
+
+def source_link(repo: str | None, scan: Scan | None, f: Finding) -> str | None:
+    """The finding's line on GitHub, at the commit (or tag) that was scanned."""
+    rev = scan and (scan.commit_sha or scan.ref)
+    if not (repo and rev and f.file) or f.file.startswith("/") or ".." in f.file.split("/"):
+        return None
+    url = f"https://github.com/{repo}/blob/{quote(rev)}/{quote(f.file)}"
+    return url + (f"#L{f.line}" if f.line and f.line > 0 else "")
+
+
+def issue_title(f: Finding) -> str:
+    title = " ".join((f.title or f.rule_id).split())
+    return (f"{title} in {f.file}" if f.file else title)[:200]
+
+
+def finding_markdown(f: Finding, scan: Scan | None, explanation: AiNote | None = None) -> str:
+    """One finding as Markdown: what was found, where, in which version, the code excerpt
+    and, if given, the AI's explanation, marked as such. For an add-on the explanation's
+    advice is left out: it is written for someone deciding whether to install it, not
+    for its author."""
+    target = f.target
+    link = source_link(github_repo(target), scan, f)
+    where = f"{f.file}:{f.line}" if f.file and f.line else f.file or ""
+    facts = [f"**Severity:** {md_text(f.severity)}",
+             f"**Found by:** {md_text(f.scanner)}, rule {md_code(f.rule_id)}"]  # fmt: skip
+    if where:
+        facts.append("**Where:** " + (f"[{md_code(where)}]({link})" if link else md_code(where)))
+    if scan and (scan.ref or scan.commit_sha):
+        sha = f"commit {md_code(scan.commit_sha[:12])}" if scan.commit_sha else ""
+        version = f"{md_code(scan.ref)} ({sha})" if scan.ref and sha else md_code(scan.ref) or sha
+        facts.append(f"**Version scanned:** {version}")
+    if f.vulns and f.vulns.get("groups"):
+        ids = "; ".join(" = ".join(_advisory(v) for v in g) for g in f.vulns["groups"])
+        package = f.vulns.get("package")
+        facts.append("**Vulnerabilities:** " + (f"{md_code(package)}: " if package else "") + ids)
+
+    parts = [f"### {md_text(f.title)}", "\n".join(f"- {fact}" for fact in facts)]
+    if f.message and f.message.strip() != (f.title or "").strip():
+        parts.append(md_text(f.message))
+    if f.evidence and f.scanner not in SECRET_SCANNERS:
+        parts.append(md_block(f.evidence, _language(f.file)))
+    answer = explanation.result if explanation and explanation.status == "done" else None
+    if answer:
+        parts.append(f"#### Explanation by {md_code(explanation.model or 'an AI model')}")
+        parts.append("*Written by an AI model from what the scanner recorded. It can be wrong.*")
+        if answer.get("summary"):
+            parts.append(md_text(answer["summary"]))
+        if answer.get("real") in REAL:
+            parts.append(f"**{REAL[answer['real']]}:** {md_text(answer.get('reason'))}")
+        if answer.get("fix") and target.profile == "owned":
+            parts.append(f"**What to do:** {md_text(answer['fix'])}")
+    return "\n\n".join(parts) + "\n"
+
+
+def new_issue_url(repo: str, title: str, body: str) -> tuple[str, bool]:
+    """GitHub's new-issue page for `repo`, filled in; and whether the body fit (a long
+    one would make the address too long, so then only the title is filled in)."""
+    base = f"https://github.com/{repo}/issues/new?"
+    url = base + urlencode({"title": title, "body": body})
+    if len(url) <= ISSUE_URL_MAX:
+        return url, True
+    return base + urlencode({"title": title}), False

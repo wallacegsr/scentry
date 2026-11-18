@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, sev %}
+{% block title %}Share · {{ f.title }} · {{ target.name }} · Scentry{% endblock %}
+{% block main %}
+<nav class="crumbs"><a href="/{{ tab }}">{{ tabs[tab] }}</a><span class="sep">›</span>
+  <a href="/targets/{{ target.id }}">{{ target.name }}</a><span class="sep">›</span>
+  <a href="/findings/{{ f.id }}">Finding</a><span class="sep">›</span><span>Share</span></nav>
+
+<div class="page-head">
+  <div>
+    <div class="headline">{{ sev(f.severity) }}</div>
+    <h1>Share this finding</h1>
+    <div class="meta"><span>{{ f.title }}</span>
+      {% if f.file %}<span class="mono">{{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}</span>{% endif %}</div>
+  </div>
+</div>
+
+{# Everything in `body` comes from the scanned code and the scanners (and the model, if
+   included); export.finding_markdown keeps it from adding formatting, links or mentions. #}
+<div class="grid share">
+  <section class="card">
+    <div class="card-head"><h2>{{ icon("code", 16) }} Markdown</h2>
+      {% if note %}
+      <nav class="segmented" aria-label="The AI explanation">
+        <a href="?explain=0" {% if not include %}class="on" aria-current="true"{% endif %}>Without explanation</a>
+        <a href="?explain=1" {% if include %}class="on" aria-current="true"{% endif %}>With {{ note.model|ai_label }}'s explanation</a>
+      </nav>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      <textarea class="markdown" readonly rows="22" spellcheck="false" aria-label="The finding as Markdown">{{ body }}</textarea>
+      <p class="muted small">Click in the box, then Ctrl+A and Ctrl+C to copy it; GitHub shows it formatted.
+        {%- if include %} The explanation is marked as an AI model's, which can be wrong.
+          {%- if target.profile == "ha" %} Its advice to you about installing is left out.{% endif %}{% endif %}
+        {%- if secret %} The code excerpt is left out: it is the line with the secret.{% endif %}</p>
+      <div class="actions">
+        <a class="btn ghost" href="/findings/{{ f.id }}/finding.md?explain={{ 1 if include else 0 }}" download>{{ icon("download", 16) }} Download .md</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>On GitHub</h2>{% if repo %}<span class="mono small">{{ repo }}</span>{% endif %}</div>
+    <div class="card-body">
+    {% if not repo %}
+      <p class="small">As far as Scentry knows, this code isn't on GitHub. Copy or download the Markdown and
+        send it wherever its author takes reports.</p>
+    {% elif target.profile == "ha" %}
+      <p class="small"><strong>This is someone else's code.</strong> If the problem could be exploited, tell the
+        author privately first: a public issue tells everyone, including people who would use it. The
+        repository's security page says whether it takes private reports, and how else to reach the author.</p>
+      <div class="actions">
+        <a class="btn" href="https://github.com/{{ repo }}/security" target="_blank" rel="noopener noreferrer">{{ icon("shield", 16) }} Security page</a>
+        <a class="btn ghost" href="{{ issue_url }}" target="_blank" rel="noopener noreferrer">New issue</a>
+      </div>
+    {% else %}
+      <p class="small">Track the fix as an issue. If the repository is public, so is the issue: for something
+        that could be exploited, a draft security advisory stays private until you publish it.</p>
+      <div class="actions">
+        <a class="btn" href="{{ issue_url }}" target="_blank" rel="noopener noreferrer">New issue</a>
+        <a class="btn ghost" href="https://github.com/{{ repo }}/security/advisories/new" target="_blank" rel="noopener noreferrer">{{ icon("shield", 16) }} Draft an advisory</a>
+      </div>
+    {% endif %}
+    {% if repo %}
+      <p class="muted small">{% if issue_whole %}The new issue opens filled in, for you to check and submit.
+        {%- else %}This one is too long to fill in through a link: the new issue opens with its title, and you
+        paste the Markdown in.{% endif %} Security reports and advisories can't be filled in that way: paste it
+        there. Nothing is sent from Scentry.</p>
+    {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

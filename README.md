@@ -85,6 +85,17 @@ the header of the overview, each tab and each target, downloads what that page c
 JSON, findings as CSV (open, or all), and for a target SARIF too. Light and dark follow
 the system.
 
+**Share**, on a finding's page, writes it up as Markdown for a GitHub issue, a security
+advisory or a message: what was found, by which scanner and rule, a link to the line at
+the commit that was scanned, the code excerpt, and, if you choose, the AI explanation,
+marked as a model's. Copy it from the page or download it as a `.md` file. When the code
+is on GitHub, **New issue** opens that repository's new-issue page with it filled in, for
+you to check and submit; Scentry sends nothing. For an integration or card, which is
+someone else's code, the page points to the repository's security page first: something
+exploitable is best reported privately. Text from the scanned code (and the model's)
+comes out as plain text: it can't add links or formatting, or @mention anyone. A secret
+scanner's excerpt is left out, and so is the AI's advice about installing an add-on.
+
 ## Install
 
 You need Docker with Compose, about 3 GB of disk for the images, and 4 GB of memory
