@@ -198,3 +198,17 @@ def test_log_page_goes_back_in_time(settings, monkeypatch):
     assert 'href="?service=ai#log">« Newest' in second
     last = client.get("/log", params={"service": "ai", "before": 2}, auth=AUTH).text
     assert "message 0" in last and "Older" not in last
+
+
+def test_scan_links():
+    from scentry.web.app import scan_links
+
+    assert scan_links("scan 12 (Agent): rescan 3, scans 4; <b>scan 5</b>") == [
+        ("scan 12", 12), (" (Agent): rescan 3, scans 4; <b>", None), ("scan 5", 5),
+        ("</b>", None),
+    ]  # fmt: skip
+    assert scan_links("") == [] and scan_links("nothing") == [("nothing", None)]
+
+
+def test_the_portal_listens_locally_unless_told_otherwise():
+    assert Settings(_env_file=None).host == "127.0.0.1"  # the web image sets 0.0.0.0

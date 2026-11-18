@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     admin_password: str = ""
     proxy_user_header: str = "Remote-User"
     trusted_proxies: list[str] = Field(default_factory=list)  # CIDRs allowed to set it
-    host: str = "0.0.0.0"  # noqa: S104 - a container listens on all interfaces
+    # Run directly, the portal listens on this computer only. The web image sets
+    # SCENTRY_HOST to every interface: there, compose decides where it's published.
+    host: str = "127.0.0.1"
     port: int = 8080
 
     # --- fetching ----------------------------------------------------------------

@@ -42,7 +42,8 @@
         <td class="opt nowrap small">{{ since(e.at, now) }}</td>
         <td class="opt small nowrap">{{ e.service }}</td>
         <td><span class="pill {{ {'warning': 'warn', 'error': 'bad', 'critical': 'bad'}.get(name, '') }}">{{ name }}</span></td>
-        <td class="message small">{{ first|link_scans }}
+        <td class="message small">
+          {%- for piece, scan in first|scan_links %}{% if scan is not none %}<a href="/scans/{{ scan }}">{{ piece }}</a>{% else %}{{ piece }}{% endif %}{% endfor %}
           {% if rest %}<details><summary>{{ rest.count("\n") + 1 }} more line{{ "s" if rest.count("\n") }}</summary><pre>{{ rest }}</pre></details>{% endif %}
           <div class="muted mono"><span class="narrow">{{ e.service }} · </span>{{ e.logger }} · {{ when(e.at) }}</div></td>
       </tr>

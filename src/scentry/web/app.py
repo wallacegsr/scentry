@@ -22,7 +22,6 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from markupsafe import Markup, escape
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -139,10 +138,19 @@ _SCAN_REF = re.compile(r"\bscan (\d{1,10})\b")
 LEVEL_NAMES = (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL)
 
 
-def link_scans(text: str) -> Markup:
-    """A log message, escaped, with each "scan 12" a link to that scan."""
-    linked = _SCAN_REF.sub(r'<a href="/scans/\1">scan \1</a>', str(escape(text)))
-    return Markup(linked)  # noqa: S704 - escaped above; the links hold only digits
+def scan_links(text: str) -> list[tuple[str, int | None]]:
+    """A log message in pieces, each "scan 12" in it with that scan's id. The template
+    makes those pieces links, and escapes every piece like any other text."""
+    pieces: list[tuple[str, int | None]] = []
+    at = 0
+    for m in _SCAN_REF.finditer(text):
+        if m.start() > at:
+            pieces.append((text[at:m.start()], None))
+        pieces.append((m[0], int(m[1])))
+        at = m.end()
+    if at < len(text):
+        pieces.append((text[at:], None))
+    return pieces
 
 
 def level_name(level: int) -> str:
@@ -253,7 +261,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                  default_days=DEFAULT_SUPPRESSION_DAYS)  # fmt: skip
     templates.env.filters["ago"] = ago
     templates.env.filters["bucket"] = bucket
-    templates.env.filters["link_scans"] = link_scans
+    templates.env.filters["scan_links"] = scan_links
     templates.env.filters["level_name"] = level_name
     templates.env.filters["ai_label"] = ai_providers.label
     templates.env.globals["providers"] = ai_providers.PROVIDERS
