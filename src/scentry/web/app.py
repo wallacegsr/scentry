@@ -10,6 +10,9 @@ import datetime
 import ipaddress
 import json
 import secrets
+import threading
+import time
+from collections import deque
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
@@ -129,7 +132,47 @@ def _trusted(host: str, cidrs: list[str]) -> bool:
     return any(ip in ipaddress.ip_network(c, strict=False) for c in cidrs)
 
 
+class SignInLimit:
+    """Wrong passwords per client address. After LIMIT within WINDOW seconds that address
+    is refused (even with the right password) until the oldest of them is WINDOW old:
+    a few hundred guesses a day, where a password worth having needs billions."""
+
+    LIMIT = 20
+    WINDOW = 15 * 60
+    MAX_ADDRESSES = 10_000
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._failed: dict[str, deque[float]] = {}
+
+    def _recent(self, who: str, now: float) -> deque[float]:
+        seen = self._failed.get(who, deque())
+        while seen and now - seen[0] >= self.WINDOW:
+            seen.popleft()
+        return seen
+
+    def wait(self, who: str, now: float | None = None) -> int:
+        """Seconds until `who` may try again; 0 if it may now."""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            seen = self._recent(who, now)
+            return int(self.WINDOW - (now - seen[0])) + 1 if len(seen) >= self.LIMIT else 0
+
+    def failed(self, who: str, now: float | None = None) -> None:
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            if who not in self._failed and len(self._failed) >= self.MAX_ADDRESSES:
+                self._failed = {k: v for k, v in self._failed.items() if self._recent(k, now)}
+                if len(self._failed) >= self.MAX_ADDRESSES:
+                    self._failed = {}  # that many addresses at once: start over
+            seen = self._recent(who, now)
+            seen.append(now)
+            self._failed[who] = seen
+
+
 def make_auth(settings: Settings):
+    limit = SignInLimit()
+
     def require_user(request: Request) -> str:
         if settings.auth_mode == "none":
             return "anonymous"
@@ -144,6 +187,10 @@ def make_auth(settings: Settings):
             return user
         scheme, _, value = request.headers.get("authorization", "").partition(" ")
         if scheme.lower() == "basic":
+            who = request.client.host if request.client else ""
+            if wait := limit.wait(who):
+                raise HTTPException(429, "Too many wrong passwords: try again later.",
+                                    {"Retry-After": str(wait)})  # fmt: skip
             try:
                 user, _, password = base64.b64decode(value).decode("utf-8").partition(":")
             except (binascii.Error, UnicodeDecodeError):
@@ -152,6 +199,7 @@ def make_auth(settings: Settings):
             pass_ok = secrets.compare_digest(password.encode(), settings.admin_password.encode())
             if user_ok and pass_ok:
                 return user
+            limit.failed(who)
         raise HTTPException(401, "Sign in.", {"WWW-Authenticate": 'Basic realm="Scentry"'})
 
     return require_user
@@ -404,6 +452,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      desc_first=("score", "last", "open", "update"), anchor="targets",
                      text=row_text)  # fmt: skip
         state = services(session, now)
+        if error and error not in acquire.FORM_ERRORS:
+            error = "That target couldn't be added."  # not text of ours: don't show it
         add_open = bool(error) or request.query_params.get("add") == "1"
         return page(request, session, "listing.html", tab=tab, table=table, error=error,
                     add_open=add_open, add_source=request.query_params.get("source", ""),
@@ -446,7 +496,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tab = "code" if profile == "owned" else "others"
         try:
             if profile not in PROFILES:
-                raise acquire.AcquireError("Unknown profile.")
+                raise HTTPException(400, "Unknown profile.")
             if profile == "ha":
                 source = acquire.normalize_ha_repo(source)
             else:
@@ -796,6 +846,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404)
         if reason not in SUPPRESSION_REASONS or not note.strip():
             raise HTTPException(400, "A suppression needs a reason and a justification.")
+        if days < 0:
+            raise HTTPException(400, "Days can't be negative (0 is permanent).")
         finding.status = "suppressed"
         finding.suppression_reason, finding.suppression_note = reason, note.strip()[:2000]
         finding.suppressed_by = user

@@ -133,7 +133,7 @@ class Listed:
     installed: bool
 
 
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f​-‏‪-‮⁦-⁩]+")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069]+")
 
 
 def _text(value: Any, limit: int) -> str:

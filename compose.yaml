@@ -47,7 +47,7 @@ services:
   runner:
     <<: *hardening
     image: ${SCENTRY_IMAGES:-ghcr.io/wallacegsr/scentry}-runner:${SCENTRY_VERSION:-latest}
-    depends_on: { db: { condition: service_healthy }, egress: { condition: service_started } }
+    depends_on: { db: { condition: service_healthy }, egress: { condition: service_healthy } }
     environment:
       SCENTRY_DATABASE_URL: postgresql+psycopg://scentry:${POSTGRES_PASSWORD}@db/scentry
       SCENTRY_GIT_TOKENS: ${SCENTRY_GIT_TOKENS:-}

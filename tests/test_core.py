@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -123,6 +126,26 @@ def _scan(session, target, settings, scanners):
     assert claimed.id == scan.id
     pipeline.run_scan(session, claimed, settings, scanners)
     return claimed
+
+
+def test_target_removed_during_its_scan(session, settings, tmp_path):
+    """Removing a target in the portal while it is scanned must not stop the runner."""
+    (tmp_path / "repo").mkdir()
+    target = Target(name="repo", profile="owned", source=str(tmp_path / "repo"))
+    session.add(target)
+    session.commit()
+    target_id = target.id
+
+    class RemovesIt(Fake):
+        def run(self, ctx):
+            with db.SessionLocal() as portal:
+                portal.delete(portal.get(Target, target_id))
+                portal.commit()
+            return super().run(ctx)
+
+    _scan(session, target, settings, [RemovesIt([raw()])])  # doesn't raise
+    assert session.scalars(select(Scan)).all() == []
+    assert session.scalars(select(Finding)).all() == []
 
 
 def test_lifecycle(session, settings, tmp_path):
@@ -272,8 +295,15 @@ def test_token_goes_to_its_own_host_only():
 
 def test_sanitize(tmp_path, settings):
     (tmp_path / ".semgrepignore").write_text("*")
-    (tmp_path / "osv-scanner.toml").write_text("")
-    assert sorted(acquire.sanitize(tmp_path, settings)) == [".semgrepignore", "osv-scanner.toml"]
+    (tmp_path / ".gitleaks.toml").write_text("")
+    # Semgrep and osv-scanner also read these in any folder.
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    (tmp_path / "a" / "b" / ".semgrepignore").write_text("*")
+    (tmp_path / "a" / "osv-scanner.toml").write_text("")
+    (tmp_path / "a" / "trivy.yaml").write_text("")  # only read at the top: left alone
+    assert acquire.sanitize(tmp_path, settings) == [
+        ".gitleaks.toml", ".semgrepignore", "a/b/.semgrepignore", "a/osv-scanner.toml"]
+    assert (tmp_path / "a" / "trivy.yaml").exists()
     (tmp_path / ".semgrepignore").write_text("*")
     honoring = settings.model_copy(update={"honor_repo_ignores": True})
     assert acquire.sanitize(tmp_path, honoring) == []
@@ -359,3 +389,20 @@ def test_is_ha_repo(tmp_path):
     (tmp_path / "custom_components" / "x").mkdir(parents=True)
     (tmp_path / "custom_components" / "x" / "manifest.json").write_text("{}")
     assert is_ha_repo(tmp_path)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux /proc only")
+def test_scanners_cant_read_the_runners_environment():
+    """A scanner runs as the runner's user: it mustn't be able to read the runner's
+    environment (tokens, database password) from /proc."""
+    peek = ("import sys; p = sys.argv[1]\n"
+            "try: print(b'TOKEN=t0k' in open(f'/proc/{p}/environ', 'rb').read())\n"
+            "except OSError: print('denied')")  # fmt: skip
+    runner = ("import os, subprocess, sys\n"
+              "from scentry import proc\n"
+              "def look(): return subprocess.run([sys.executable, '-I', '-c', sys.argv[1],"
+              " str(os.getpid())], capture_output=True, text=True).stdout.strip()\n"
+              "before = look(); ok = proc.keep_secrets_from_children(); print(before, ok, look())")
+    out = subprocess.run([sys.executable, "-c", runner, peek], capture_output=True, text=True,
+                         env={**os.environ, "TOKEN": "t0k"}, check=True).stdout.split()
+    assert out == ["True", "True", "denied"]

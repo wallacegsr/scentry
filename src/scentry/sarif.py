@@ -12,7 +12,7 @@ from scentry.models import SEVERITY_RANK
 if TYPE_CHECKING:
     from scentry.scanners.base import RawFinding
 
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f​-‏‪-‮⁦-⁩]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
 _LEVELS = {"error": "high", "warning": "medium", "note": "low", "none": "info"}
 _MAX_LINE_FILE = 2_000_000
 

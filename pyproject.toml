@@ -31,6 +31,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/scentry"]
 
+[tool.uv]
+# Only releases at least a week old (a hijacked one is usually pulled by then).
+exclude-newer = "7 days"
+# Except the Anthropic SDK: the AI explanations use API features only its newest has.
+exclude-newer-package = { anthropic = false }
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

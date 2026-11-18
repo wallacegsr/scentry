@@ -7,6 +7,11 @@ dependencies = ["semgrep==1.185.0"]
 
 [tool.uv]
 package = false
+# Only releases at least a week old (a hijacked one is usually pulled by then).
+exclude-newer = "7 days"
+# Semgrep pins mcp 1.29.0, which has advisories (fixed in 1.30.0). Scentry never runs
+# Semgrep's MCP server or client; this keeps the scanners' locks free of them anyway.
+override-dependencies = ["mcp==1.30.0"]
 # Linux only, and wheels for both image architectures must exist.
 environments = ["sys_platform == 'linux'"]
 required-environments = [

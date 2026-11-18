@@ -15,7 +15,7 @@ import time
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
-from scentry import commits, db, pipeline, updates
+from scentry import commits, db, pipeline, proc, updates
 from scentry.config import Settings, get_settings
 from scentry.models import Scan, Target, utcnow
 
@@ -93,6 +93,8 @@ def schedule_due(session: Session, now: datetime.datetime | None = None) -> int:
 def main(settings: Settings | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = settings or get_settings()
+    if not proc.keep_secrets_from_children():
+        log.warning("couldn't hide this process's environment from the scanners it runs")
     db.configure(settings.database_url)
     with db.SessionLocal() as session:
         if n := requeue_interrupted(session):
@@ -110,9 +112,11 @@ def main(settings: Settings | None = None) -> None:
                 last_schedule = time.monotonic()
             scan = claim(session)
             if scan is not None:
-                log.info("scan %s: %s (%s)", scan.id, scan.target.name, scan.target.profile)
+                scan_id = scan.id
+                log.info("scan %s: %s (%s)", scan_id, scan.target.name, scan.target.profile)
                 pipeline.run_scan(session, scan, settings)
-                log.info("scan %s: %s", scan.id, scan.status)
+                status = session.scalar(select(Scan.status).where(Scan.id == scan_id))
+                log.info("scan %s: %s", scan_id, status or "removed with its target")
                 continue
             # Nothing queued: one look for new commits, or one advisory re-check, if one
             # is due (seconds of work each).

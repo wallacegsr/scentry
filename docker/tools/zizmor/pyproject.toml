@@ -7,6 +7,8 @@ dependencies = ["zizmor==1.32.0"]
 
 [tool.uv]
 package = false
+# Only releases at least a week old (a hijacked one is usually pulled by then).
+exclude-newer = "7 days"
 # Linux only, and wheels for both image architectures must exist.
 environments = ["sys_platform == 'linux'"]
 required-environments = [

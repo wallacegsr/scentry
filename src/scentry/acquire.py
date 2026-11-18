@@ -15,16 +15,27 @@ _HTTPS = re.compile(r"^https://[A-Za-z0-9.-]+(:\d+)?/[A-Za-z0-9._~/-]+$")
 _REF = re.compile(r"^[A-Za-z0-9._/+-]{1,200}$")
 _HA_REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$")
 
-# Files a repository could use to hide code from a scanner.
+# Files a repository could use to hide code from a scanner: read at the top of the tree
+# only, or (IGNORE_ANYWHERE) in any folder, next to the code they apply to.
 IGNORE_FILES = (
-    ".semgrepignore", ".gitleaksignore", ".gitleaks.toml", "osv-scanner.toml",
-    ".trivyignore", ".trivyignore.yaml", "trivy.yaml", ".bandit", "zizmor.yml",
-    ".github/zizmor.yml",
+    ".gitleaksignore", ".gitleaks.toml", ".trivyignore", ".trivyignore.yaml", "trivy.yaml",
+    ".bandit", "zizmor.yml", ".github/zizmor.yml",
 )  # fmt: skip
+IGNORE_ANYWHERE = (".semgrepignore", "osv-scanner.toml")
 
 
 class AcquireError(Exception):
     pass
+
+
+# What adding a target can be refused with. The portal shows only these texts after a
+# redirect, so a crafted link can't put words of its own on the page.
+BAD_REF = "That branch or tag name isn't allowed."
+NO_LOCAL = "Use an https:// clone URL (local paths are switched off)."
+NOT_ABSOLUTE = "A local path must be absolute."
+BAD_URL = "Use a plain https:// clone URL with no username or token in it."
+BAD_HA_REPO = "Use owner/repo or a https://github.com/owner/repo URL."
+FORM_ERRORS = (BAD_REF, NO_LOCAL, NOT_ABSOLUTE, BAD_URL, BAD_HA_REPO)
 
 
 def is_local(source: str) -> bool:
@@ -33,19 +44,19 @@ def is_local(source: str) -> bool:
 
 def validate_ref(ref: str | None) -> None:
     if ref and (ref.startswith("-") or ".." in ref or not _REF.match(ref)):
-        raise AcquireError("That branch or tag name isn't allowed.")
+        raise AcquireError(BAD_REF)
 
 
 def validate_source(source: str, settings: Settings) -> None:
     """An https clone URL without credentials in it, or a local path if those are enabled."""
     if is_local(source):
         if not settings.allow_local_paths:
-            raise AcquireError("Use an https:// clone URL (local paths are switched off).")
+            raise AcquireError(NO_LOCAL)
         if not Path(source).is_absolute():
-            raise AcquireError("A local path must be absolute.")
+            raise AcquireError(NOT_ABSOLUTE)
         return
     if not _HTTPS.match(source) or urlsplit(source).username is not None:
-        raise AcquireError("Use a plain https:// clone URL with no username or token in it.")
+        raise AcquireError(BAD_URL)
 
 
 def normalize_ha_repo(source: str) -> str:
@@ -53,7 +64,7 @@ def normalize_ha_repo(source: str) -> str:
     s = source.strip().removesuffix("/").removesuffix(".git")
     s = re.sub(r"^https://github\.com/", "", s)
     if not _HA_REPO.match(s):
-        raise AcquireError("Use owner/repo or a https://github.com/owner/repo URL.")
+        raise AcquireError(BAD_HA_REPO)
     return s
 
 
@@ -135,10 +146,12 @@ def sanitize(tree: Path, settings: Settings) -> list[str]:
     """Remove in-repo scanner ignore/config files; returns what was removed."""
     if settings.honor_repo_ignores:
         return []
+    found = [tree / rel for rel in IGNORE_FILES]
+    for name in IGNORE_ANYWHERE:
+        found += tree.rglob(name)  # doesn't follow symlinked folders
     removed = []
-    for rel in IGNORE_FILES:
-        path = tree / rel
+    for path in found:
         if path.is_file() or path.is_symlink():
             path.unlink()
-            removed.append(rel)
-    return removed
+            removed.append(path.relative_to(tree).as_posix())
+    return sorted(removed)

@@ -69,6 +69,11 @@ class View:
         return self._url(sort=self.sort, dir="desc" if self.desc else "asc")
 
 
+# Parameters that are about this one showing of the page, not kept by sorting or searching:
+# a paused refresh, and the add-target form shown again after a mistake.
+ONCE = frozenset({"refresh", "error", "source", "add"})
+
+
 def view(
     params: QueryParams,
     rows: Iterable,
@@ -101,7 +106,7 @@ def view(
     rows.sort(key=lambda r: _key(sorts[sort](r)), reverse=desc)
     rows.sort(key=lambda r: sorts[sort](r) is None)  # stable: empty ones go last
     mine = {f"{prefix}{k}" for k in ("sort", "dir", "q")}
-    others = [(k, v) for k, v in params.multi_items() if k not in mine and k != "refresh"]
+    others = [(k, v) for k, v in params.multi_items() if k not in mine and k not in ONCE]
     return View(rows=rows, total=total, sort=sort, desc=desc, q=q, prefix=prefix,
                 anchor=anchor or prefix.rstrip("_") or "table", params=others,
                 desc_first=frozenset(desc_first))  # fmt: skip

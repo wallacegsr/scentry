@@ -7,7 +7,7 @@ from sqlalchemy import select
 from scentry import db
 from scentry.config import Settings
 from scentry.models import Finding, Scan, Target
-from scentry.web.app import create_app
+from scentry.web.app import SignInLimit, create_app
 
 AUTH = ("admin", "pw")
 
@@ -31,6 +31,24 @@ def test_sign_in_required(client):
     assert ok.status_code == 200
     assert "script-src" not in ok.headers["content-security-policy"]
     assert "default-src 'none'" in ok.headers["content-security-policy"]
+
+
+def test_wrong_passwords_are_limited(client):
+    limit = SignInLimit.LIMIT
+    for _ in range(limit):
+        assert client.get("/", auth=("admin", "guess")).status_code == 401
+    r = client.get("/", auth=AUTH)  # the right one too, from that address, for a while
+    assert r.status_code == 429 and 0 < int(r.headers["retry-after"]) <= SignInLimit.WINDOW + 1
+    assert client.get("/").status_code == 401  # no password: still asked for one
+
+
+def test_sign_in_limit_window():
+    limit = SignInLimit()
+    for i in range(limit.LIMIT):
+        limit.failed("a", now=100.0 + i)
+    assert limit.wait("b", now=200.0) == 0
+    assert limit.wait("a", now=200.0) == limit.WINDOW - 100 + 1
+    assert limit.wait("a", now=100.0 + limit.WINDOW) == 0  # the first has aged out
 
 
 def test_refuses_to_start_without_a_password(tmp_path):
@@ -71,6 +89,9 @@ def test_bad_target_and_cross_site_post(client):
     assert "clone URL" in page and 'value="http://x/y"' in page
     r = client.post("/targets", auth=AUTH, data={"profile": "ha", "source": "not a repo"})
     assert r.headers["location"].startswith("/others?error=")
+    # A crafted link can't put its own words on the page.
+    page = client.get("/code?error=Session+expired:+sign+in+at+evil.example", auth=AUTH).text
+    assert "evil.example" not in page and "That target couldn&#39;t be added." in page
     r = client.post("/targets", auth=AUTH, data={"profile": "ha", "source": "a/b"},
                     headers={"Sec-Fetch-Site": "cross-site"})  # fmt: skip
     assert r.status_code == 403
@@ -103,6 +124,8 @@ def test_suppress_and_reopen(client):
         s.commit()
     bad = client.post("/findings/1/suppress", auth=AUTH, data={"reason": "nope", "note": "n"})
     assert bad.status_code == 400
+    negative = {"reason": "false_positive", "note": "n", "days": "-5"}
+    assert client.post("/findings/1/suppress", auth=AUTH, data=negative).status_code == 400
     form = {"reason": "false_positive", "note": "test fixture", "days": "30"}
     ok = client.post("/findings/1/suppress", auth=AUTH, data=form)
     assert ok.status_code == 303

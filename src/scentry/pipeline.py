@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from sqlalchemy import or_, select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from scentry import acquire, findings, updates
@@ -29,6 +30,7 @@ def run_scan(
     session: Session, scan: Scan, settings: Settings, scanners: list[Scanner] | None = None
 ) -> None:
     target = scan.target
+    target_id, scan_id = target.id, scan.id
     work = Path(tempfile.mkdtemp(prefix="scan-", dir=settings.work_dir))
     try:
         out_dir = work / "out"
@@ -63,19 +65,27 @@ def run_scan(
         defer_github_scans(session, wait.until)
         scan.status, scan.started_at, scan.not_before = "queued", None, wait.until
         log.info("scan %s: GitHub's API limit is used up; scans wait until %s UTC",
-                 scan.id, f"{wait.until:%H:%M}")  # fmt: skip
+                 scan_id, f"{wait.until:%H:%M}")  # fmt: skip
     except acquire.AcquireError as exc:
         session.rollback()
         scan.status, scan.error = "failed", str(exc)
     except Exception as exc:
-        log.exception("scan %s failed", scan.id)
+        log.exception("scan %s failed", scan_id)
         session.rollback()
         scan.status, scan.error = "failed", f"{type(exc).__name__}: {exc}"[:1000]
     finally:
         shutil.rmtree(work, onerror=_force_remove)
         if scan.status != "queued":
             scan.finished_at = utcnow()
-        session.commit()
+        try:
+            session.commit()
+        except SQLAlchemyError:
+            # Removed in the portal while this ran: its scans went with it. Anything
+            # else stops the runner, and a restart queues the scan again.
+            session.rollback()
+            if session.scalar(select(Target.id).where(Target.id == target_id)) is not None:
+                raise
+            log.info("scan %s: its target was removed while it ran", scan_id)
 
 
 class _Deferred(Exception):

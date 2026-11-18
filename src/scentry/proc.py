@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +22,20 @@ class Result:
     returncode: int
     stdout: str
     stderr: str
+
+
+def keep_secrets_from_children() -> bool:
+    """Make this process non-dumpable (Linux): a scanner runs as the same user, and could
+    otherwise read this process's environment (the git tokens, the database password)
+    from /proc/<pid>/environ, or its memory. The scanners themselves are unaffected:
+    starting a program makes it dumpable again. Returns whether it worked."""
+    if not sys.platform.startswith("linux"):
+        return False
+    pr_set_dumpable = 4
+    try:
+        return ctypes.CDLL(None, use_errno=True).prctl(pr_set_dumpable, 0, 0, 0, 0) == 0
+    except (OSError, AttributeError):
+        return False
 
 
 def clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:

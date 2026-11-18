@@ -46,4 +46,5 @@ CONF
 
 dnsmasq --keep-in-foreground --no-resolv --no-hosts --port=53 --listen-address="${self}" \
   --bind-interfaces --conf-file=/tmp/dnsmasq.conf --pid-file= --log-facility=- &
+echo $! > /tmp/dnsmasq.pid  # for the health check, beside nginx's own /tmp/nginx.pid
 exec nginx -c /tmp/nginx.conf -g 'daemon off;'

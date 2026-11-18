@@ -9,7 +9,8 @@ RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends dnsmasq-base nginx-light libnginx-mod-stream \
     && rm -rf /var/lib/apt/lists/*
 COPY allowlist.txt /etc/egress/
-COPY --chmod=0755 entrypoint.sh /entrypoint.sh
+COPY --chmod=0755 entrypoint.sh healthcheck.sh /
 USER nobody
 EXPOSE 53/udp 53/tcp 443
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["/healthcheck.sh"]
 ENTRYPOINT ["/entrypoint.sh"]

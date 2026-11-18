@@ -35,10 +35,13 @@ class Gitleaks(SarifScanner):
 
     def command(self, ctx: ScanContext, out: Path) -> list[str]:
         mode = "git" if ctx.tree and (ctx.tree / ".git").exists() else "dir"
-        return [
+        cmd = [
             "gitleaks", mode, "--redact", "--no-banner", "--exit-code", "0",
-            "--report-format", "sarif", "--report-path", str(out), ".",
+            "--report-format", "sarif", "--report-path", str(out),
         ]  # fmt: skip
+        if not ctx.settings.honor_repo_ignores:
+            cmd.append("--ignore-gitleaks-allow")
+        return [*cmd, "."]
 
 
 class OsvScanner(SarifScanner):
@@ -90,7 +93,12 @@ class Zizmor(SarifScanner):
         return ctx.tree is not None and (ctx.tree / ".github" / "workflows").is_dir()
 
     def command(self, ctx: ScanContext, out: Path) -> list[str]:
-        return ["zizmor", "--offline", "--no-exit-codes", "--format", "sarif", "."]
+        cmd = ["zizmor", "--offline", "--no-exit-codes", "--format", "sarif"]
+        if not ctx.settings.honor_repo_ignores:
+            # No config, no "# zizmor: ignore" comments, and workflows a .gitignore
+            # lists are read too (it skips those by default, even when committed).
+            cmd += ["--no-config", "--no-ignores", "--collect=all"]
+        return [*cmd, "."]
 
 
 class Bandit(SarifScanner):

@@ -280,7 +280,7 @@ def test_sync_once_records_status(session, settings, fake):
 
 def test_parse_catalog_validates_everything():
     listed = hass.parse_catalog([
-        {"full_name": "Good/Card", "category": "plugin", "name": "Good‮Card\n",
+        {"full_name": "Good/Card", "category": "plugin", "name": "Good\u202eCard\n",
          "description": "x" * 900 + "\x1b[31m", "available_version": "v1", "stars": 5,
          "downloads": True},
         {"full_name": "o/no-version", "category": "integration", "available_version": "-x",

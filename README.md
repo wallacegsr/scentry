@@ -34,8 +34,11 @@ Rules that hold everywhere:
 - **Nothing scanned is ever run, built or installed.**
 - **A scan with a missing, failed or timed-out scanner is marked incomplete** and
   can't get the top grade.
-- **A repository can't hide code from the scanners.** In-repo ignore files and inline
-  `nosemgrep` / `nosec` comments aren't honoured unless you switch that on. Suppress a
+- **A repository can't hide code from the scanners.** In-repo ignore and config files
+  (in any folder, for the scanners that read them there) and inline `nosemgrep`,
+  `nosec`, `gitleaks:allow` and zizmor ignore comments aren't honoured, and zizmor
+  reads workflows a `.gitignore` lists, unless you switch that on. Trivy's inline
+  `trivy:ignore` comments are the exception: it has no switch for them. Suppress a
   finding in the portal instead: it needs a reason and comes back for review after
   90 days by default.
 - **A finding is only marked fixed when the scanner that found it ran successfully**
@@ -122,7 +125,11 @@ Environment variables (or load your `.env` with *Load variables from .env file*)
 The stack's name decides its volumes' names, so keep the name when redeploying.
 
 The portal speaks plain HTTP and listens on `127.0.0.1` by default. Put it behind
-your reverse proxy for TLS before opening it to your network.
+your reverse proxy for TLS before opening it to your network. After 20 wrong passwords
+in 15 minutes from one address, that address is refused for the rest of the 15
+minutes. Behind a proxy, every visitor arrives from the proxy's address, so someone
+guessing would lock you out too: there, use `SCENTRY_AUTH_MODE=proxy` and let the
+proxy handle sign-in.
 
 ### Upgrading
 
@@ -144,7 +151,7 @@ Everything is an environment variable; `.env.example` lists them with comments.
 
 | Need | Setting |
 |---|---|
-| Private repositories | `SCENTRY_GIT_TOKENS={"github.com":"<read-only token>"}` |
+| Private repositories | `SCENTRY_GIT_TOKENS={"github.com":"<read-only token>"}`: a fine-grained token with read access to those repositories' contents only |
 | Self-hosted Gitea / GitLab | The same, keyed by your host, plus `SCENTRY_EXTRA_ALLOWED_DOMAINS` |
 | Single sign-on | `SCENTRY_AUTH_MODE=proxy` with `SCENTRY_TRUSTED_PROXIES` |
 | Fewer scanners | `SCENTRY_DISABLED_SCANNERS=["bandit"]` |
@@ -329,9 +336,12 @@ touches scanned code.
   Sorting and search are links and forms; pop-ups are the browser's own popovers.
 - **runner** takes scans from the queue (the `scans` table, so a restart loses
   nothing). All scanners are baked into its image and run as child processes with a
-  scrubbed environment: no tokens, no database URL. It has no Docker socket, runs as a
-  non-root user with a read-only root filesystem and no capabilities, and keeps
-  scanned code on a non-executable in-memory filesystem.
+  scrubbed environment: no tokens, no database URL. The runner makes itself
+  non-dumpable, so a scanner (same user) can't read those from its `/proc` entries
+  either. It has no Docker socket, runs as a non-root user with a read-only root
+  filesystem and no capabilities, and keeps scanned code on a non-executable
+  in-memory filesystem. What a subverted scanner could still do is what the runner
+  can: write to the database, and reach the allowlisted hosts.
 - **egress** is the runner's only route out, and its DNS server. Names on the
   allowlist (`docker/egress/allowlist.txt`) resolve to the gateway, which reads the
   server name from the TLS hello (it decrypts nothing) and passes the connection on
@@ -350,16 +360,19 @@ What goes into the images is pinned:
 
 - Scentry's own Python dependencies, from `uv.lock`: exact versions, every file
   checked against its recorded hash.
-- Every scanner's version. The release binaries (osv-scanner, Gitleaks, Trivy) are in
-  `docker/Dockerfile`, each checked against a sha256. The Python ones (Semgrep,
+- Every scanner's version. The release binaries (osv-scanner, Trivy) are in
+  `docker/Dockerfile`, each checked against a sha256. Gitleaks is built there from
+  its release commit with a current Go, because its own binaries are built with an
+  old one. The Python ones (Semgrep,
   GuardDog, Bandit, zizmor, Barkley) are in `docker/tools/<name>/`, each with a
   `uv.lock` that pins everything it needs, every file checked against its recorded
   hash, and each in its own environment. They install from wheels only, except Barkley,
   which isn't on PyPI: it is built from an exact commit, with a locked build backend.
 - The base images, by digest. The GitHub Actions that build them, by commit.
 
-Dependabot proposes updates to all of these weekly, and the tests run on each before
-anything is published.
+Dependabot proposes updates to all of these weekly, once a release is a week old
+(uv's `exclude-newer` holds the locks to the same, except for the Anthropic SDK), and
+the tests run on each before anything is published.
 
 ## Development
 

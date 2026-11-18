@@ -2,11 +2,14 @@
 # docker/tools/*/uv.lock, the GitHub Actions pinned by commit, and the base images pinned
 # by digest. Each week's updates come as one pull
 # request per group below; CI runs the tests on it before anything is published.
+# Each waits a week after its release (cooldown): a hijacked or broken release is
+# usually found and pulled by then. uv's exclude-newer does the same for the locks.
 version: 2
 updates:
   - package-ecosystem: uv
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
     groups:
       python: { patterns: ["*"] }
 
@@ -15,12 +18,14 @@ updates:
   - package-ecosystem: uv
     directories: ["/docker/tools/*"]
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
     groups:
       scanners: { patterns: ["*"] }
 
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
     groups:
       actions: { patterns: ["*"] }
 
@@ -29,6 +34,7 @@ updates:
   - package-ecosystem: docker
     directories: [/docker, /docker/egress]
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
     groups:
       images: { patterns: ["*"] }
     ignore:
@@ -39,6 +45,7 @@ updates:
   - package-ecosystem: docker-compose
     directory: /
     schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
     ignore:
       - dependency-name: postgres
         update-types: [version-update:semver-major]
