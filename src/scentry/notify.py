@@ -40,7 +40,7 @@ from urllib.parse import parse_qsl, urlsplit
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from scentry import db, worker
+from scentry import db, logs, worker
 from scentry.config import Settings, get_settings
 from scentry.models import (
     SEVERITIES,
@@ -504,6 +504,7 @@ def main(settings: Settings | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = settings or get_settings()
     db.configure(settings.database_url)
+    logs.install("notify", settings)
     sender = Sender(settings.notify_urls)
     if sender.invalid:
         log.error("%s of the notification URLs couldn't be read and are ignored",

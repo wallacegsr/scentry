@@ -15,7 +15,7 @@ import time
 from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
-from scentry import commits, db, pipeline, proc, updates
+from scentry import commits, db, logs, pipeline, proc, updates
 from scentry.config import Settings, get_settings
 from scentry.models import Scan, Target, utcnow
 
@@ -93,9 +93,10 @@ def schedule_due(session: Session, now: datetime.datetime | None = None) -> int:
 def main(settings: Settings | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = settings or get_settings()
-    if not proc.keep_secrets_from_children():
-        log.warning("couldn't hide this process's environment from the scanners it runs")
     db.configure(settings.database_url)
+    logs.install("runner", settings)
+    if not proc.keep_secrets_from_children():  # before any scanner runs
+        log.warning("couldn't hide this process's environment from the scanners it runs")
     with db.SessionLocal() as session:
         if n := requeue_interrupted(session):
             log.info("re-queued %s interrupted scan(s)", n)

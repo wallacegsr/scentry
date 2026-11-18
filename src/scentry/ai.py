@@ -22,7 +22,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from scentry import ai_providers, db
+from scentry import ai_providers, db, logs
 from scentry.ai_providers import AiError, Provider, Retry
 from scentry.config import Settings, get_settings
 from scentry.models import (
@@ -335,6 +335,7 @@ def main(settings: Settings | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = settings or get_settings()
     db.configure(settings.database_url)
+    logs.install("ai", settings)
     provider, off = ai_providers.make(settings)
     problem = provider.check() if provider else None
     with db.SessionLocal() as session:

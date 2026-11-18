@@ -275,3 +275,16 @@ class NotifyState(Base):
     # The notifier's SCENTRY_NOTIFY_* defaults, for the portal to show next to each
     # target's overrides (the portal isn't given those settings). No secrets.
     defaults: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+
+
+class LogEntry(Base):
+    """One message from a service's log, for the portal's Log page (logs.py)."""
+
+    __tablename__ = "log_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime.datetime] = mapped_column(index=True)
+    service: Mapped[str] = mapped_column(String(20))  # web, runner, hass-sync, notify, ai
+    level: Mapped[int]  # Python logging's: 20 info, 30 warning, 40 error, 50 critical
+    logger: Mapped[str] = mapped_column(String(100))  # e.g. scentry.pipeline
+    message: Mapped[str] = mapped_column(Text)  # with a traceback, if there was one

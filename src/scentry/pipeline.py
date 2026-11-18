@@ -13,7 +13,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from scentry import acquire, findings, updates
+from scentry import acquire, findings, proc, updates
 from scentry.config import Settings
 from scentry.models import Finding, Scan, Target, utcnow
 from scentry.scanners import ScanContext, Scanner, ScannerRun, execute, scanners_for
@@ -35,16 +35,22 @@ def run_scan(
     try:
         out_dir = work / "out"
         out_dir.mkdir()
+        temp = work / "tmp"  # the scanners' temporary files: they can need hundreds of MB
+        temp.mkdir()
         ctx = ScanContext(settings, target.profile, target.source, scan.ref or target.ref, out_dir)
-        if target.profile == "owned":
-            ctx.tree = work / "tree"
-            scan.commit_sha = acquire.acquire(target.source, ctx.ref, ctx.tree, settings)
-            acquire.sanitize(ctx.tree, settings)
-
         runs: list[ScannerRun] = []
-        for scanner in scanners if scanners is not None else scanners_for(target.profile):
-            log.info("scan %s: %s", scan.id, scanner.name)
-            runs.append(execute(scanner, ctx))
+        with proc.temp_dir(temp):
+            if target.profile == "owned":
+                ctx.tree = work / "tree"
+                scan.commit_sha = acquire.acquire(target.source, ctx.ref, ctx.tree, settings)
+                acquire.sanitize(ctx.tree, settings)
+            for scanner in scanners if scanners is not None else scanners_for(target.profile):
+                log.info("scan %s: %s", scan_id, scanner.name)
+                runs.append(execute(scanner, ctx))
+        for run in runs:
+            if run.state not in ("ok", "not_applicable") or run.extra.get("unfinished"):
+                log.warning("scan %s (%s): %s %s: %s", scan_id, target.name, run.name,
+                            run.state, run.detail)  # fmt: skip
 
         retry_at = max((r.extra["retry_at"] for r in runs if r.extra.get("retry_at")),
                        default=None)  # fmt: skip
@@ -67,6 +73,7 @@ def run_scan(
         log.info("scan %s: GitHub's API limit is used up; scans wait until %s UTC",
                  scan_id, f"{wait.until:%H:%M}")  # fmt: skip
     except acquire.AcquireError as exc:
+        log.warning("scan %s (%s): the code couldn't be fetched: %s", scan_id, target.name, exc)
         session.rollback()
         scan.status, scan.error = "failed", str(exc)
     except Exception as exc:

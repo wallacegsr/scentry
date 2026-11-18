@@ -32,13 +32,21 @@ def main() -> None:
         for path in db.new_revision(args.message):
             print(path)
     elif args.command == "web":
+        import logging
+
         import uvicorn
 
+        from scentry import logs
         from scentry.config import get_settings
         from scentry.web.app import create_app
 
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
         settings = get_settings()
-        uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
+        app = create_app(settings)
+        logs.install("web", settings, prune_old=True)
+        # Uvicorn's messages go through the same logging as everything else (log_config
+        # None): its errors reach the Log page, and the console looks like the others'.
+        uvicorn.run(app, host=settings.host, port=settings.port, log_config=None)
     elif args.command == "hass-sync":
         from scentry import hass_sync
 

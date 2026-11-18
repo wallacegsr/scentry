@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from scentry import db, worker
+from scentry import db, logs, worker
 from scentry.config import Settings, get_settings
 from scentry.hass import (
     Connection,
@@ -226,6 +226,7 @@ def main(settings: Settings | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = settings or get_settings()
     db.configure(settings.database_url)
+    logs.install("hass-sync", settings)
     if not settings.hass_url:
         log.info("SCENTRY_HASS_URL is not set: Home Assistant sync is off")
         while True:  # stay up quietly, so a stack with this service unused is healthy

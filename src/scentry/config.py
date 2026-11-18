@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     ai_timeout: int = 600  # seconds to wait for one answer
     ai_daily_limit: int = 50  # requests per day (UTC); further ones wait for the next day
 
+    # --- the log (System > Log in the portal) ------------------------------------------
+    # Each service also keeps its messages in the database, to search in one place. The
+    # web service clears out those older than this (days).
+    log_days: int = 14
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -9,6 +9,8 @@ import binascii
 import datetime
 import ipaddress
 import json
+import logging
+import re
 import secrets
 import threading
 import time
@@ -20,6 +22,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup, escape
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -32,6 +35,7 @@ from scentry import (
     export,
     findings,
     hass_sync,
+    logs,
     notify,
     worker,
 )
@@ -45,6 +49,7 @@ from scentry.models import (
     CatalogItem,
     Finding,
     HassSync,
+    LogEntry,
     NotifyState,
     Scan,
     Target,
@@ -70,6 +75,8 @@ def _graded(scans: list[Scan], version: str | None) -> Scan | None:
 
 REFRESH_SECONDS = 10
 CATALOG_PAGE = 50  # search results shown
+LOG_PAGE = 100  # log messages on a page
+LOG_LEVELS = {"warning": logging.WARNING, "error": logging.ERROR}  # the Log page's filter
 # Barkley's comparison buckets, in its order, as the scan page names them.
 DIFF_GROUPS = {"findings": "findings", "flows": "data flows", "data": "data read",
                "hosts": "hosts", "packages": "packages", "hooks": "hooks",
@@ -126,6 +133,20 @@ def category(target: Target) -> str:
     if target.origin == "hacs" and target.hacs_removed_at is None:
         return "ha"
     return "code" if target.profile == "owned" else "others"
+
+
+_SCAN_REF = re.compile(r"\bscan (\d{1,10})\b")
+LEVEL_NAMES = (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL)
+
+
+def link_scans(text: str) -> Markup:
+    """A log message, escaped, with each "scan 12" a link to that scan."""
+    linked = _SCAN_REF.sub(r'<a href="/scans/\1">scan \1</a>', str(escape(text)))
+    return Markup(linked)  # noqa: S704 - escaped above; the links hold only digits
+
+
+def level_name(level: int) -> str:
+    return logging.getLevelName(level).lower() if level in LEVEL_NAMES else str(level)
 
 
 def bucket(score: int | None) -> str:
@@ -232,6 +253,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                  default_days=DEFAULT_SUPPRESSION_DAYS)  # fmt: skip
     templates.env.filters["ago"] = ago
     templates.env.filters["bucket"] = bucket
+    templates.env.filters["link_scans"] = link_scans
+    templates.env.filters["level_name"] = level_name
     templates.env.filters["ai_label"] = ai_providers.label
     templates.env.globals["providers"] = ai_providers.PROVIDERS
     user_dep = Depends(make_auth(settings))
@@ -490,8 +513,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """The other services: Home Assistant, notifications, AI explanations; and exports."""
         now = utcnow()
         state = services(session, now)
+        day = now - datetime.timedelta(hours=24)
+        logged = dict(session.execute(
+            select(LogEntry.level >= logging.ERROR, func.count())
+            .where(LogEntry.at >= day, LogEntry.level >= logging.WARNING)
+            .group_by(LogEntry.level >= logging.ERROR)).all())  # fmt: skip
         return page(request, session, "system.html", tab="system", state=state,
-                    sync_counts=hass_sync.installed_counts(session), now=now,
+                    sync_counts=hass_sync.installed_counts(session), now=now, user=user,
+                    log_errors=logged.get(True, 0), log_warnings=logged.get(False, 0),
+                    log_days=settings.log_days)  # fmt: skip
+
+    @app.get("/log")
+    def log_page(request: Request, q: str = "", service: str = "", level: str = "",
+                 before: int | None = None, session: Session = session_dep,
+                 user: str = user_dep):  # fmt: skip
+        """The services' log, newest first: searched, filtered by service and level, and
+        paged back in time (`before`: the oldest message of the page before)."""
+        q = " ".join(q.split())[:100]
+        service = service if service in logs.SERVICES else ""
+        level = level if level in LOG_LEVELS else ""
+        query = select(LogEntry)
+        for word in q.lower().split()[:8]:
+            query = query.where(or_(func.lower(LogEntry.message).contains(word, autoescape=True),
+                                    func.lower(LogEntry.logger).contains(word, autoescape=True)))
+        if service:
+            query = query.where(LogEntry.service == service)
+        if level:
+            query = query.where(LogEntry.level >= LOG_LEVELS[level])
+        total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
+        if before is not None:
+            query = query.where(LogEntry.id < before)
+        rows = session.scalars(query.order_by(LogEntry.id.desc()).limit(LOG_PAGE + 1)).all()
+        filters = [(k, v) for k, v in (("q", q), ("service", service), ("level", level)) if v]
+        older = (f"?{urlencode([*filters, ('before', rows[LOG_PAGE - 1].id)])}"
+                 if len(rows) > LOG_PAGE else None)  # fmt: skip
+        newest = f"?{urlencode(filters)}" if before is not None else None
+        return page(request, session, "log.html", tab="system", rows=rows[:LOG_PAGE],
+                    total=total, q=q, service=service, level=level, older=older,
+                    newest=newest, services=logs.SERVICES, log_days=settings.log_days,
                     user=user)  # fmt: skip
 
     @app.post("/hass/sync")

@@ -103,6 +103,18 @@
   </section>
 
   <section class="card">
+    <div class="card-head"><h2>{{ icon("log", 16) }} Log</h2>
+      {%- if log_errors %}<span class="pill bad">{{ log_errors }} error{{ "s" if log_errors != 1 }}</span>
+      {%- elif log_warnings %}<span class="pill warn">{{ log_warnings }} warning{{ "s" if log_warnings != 1 }}</span>{% endif %}</div>
+    <div class="card-body">
+      <p class="small">Last 24 hours: {{ log_errors }} error{{ "s" if log_errors != 1 }}, {{ log_warnings }} warning{{ "s" if log_warnings != 1 }}.</p>
+      <p class="muted small">What each service did and what went wrong, searchable in one place: a scanner that
+        didn't finish, a notification that wasn't delivered, a lost connection. Kept {{ log_days }} days.</p>
+    </div>
+    <div class="card-foot small"><a href="/log?level=warning">Warnings and errors</a> · <a href="/log">Everything</a></div>
+  </section>
+
+  <section class="card">
     <div class="card-head"><h2>{{ icon("download", 16) }} Export</h2></div>
     <div class="card-body">
       <p class="small"><a href="/export.json">Everything as JSON</a>: every target, its findings and current result.</p>

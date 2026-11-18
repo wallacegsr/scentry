@@ -406,3 +406,70 @@ def test_scanners_cant_read_the_runners_environment():
     out = subprocess.run([sys.executable, "-c", runner, peek], capture_output=True, text=True,
                          env={**os.environ, "TOKEN": "t0k"}, check=True).stdout.split()
     assert out == ["True", "True", "denied"]
+
+
+def test_scanners_keep_temporary_files_in_the_scans_folder(session, settings, tmp_path):
+    """Not in the system's /tmp, which is small: in the scan's work folder, which is
+    sized for them (SCENTRY_WORK_SIZE) and removed with the scan."""
+    from scentry import proc
+
+    seen = {}
+
+    class Temp(Fake):
+        def run(self, ctx):
+            env = proc.clean_env()  # what a scanner program is started with
+            seen.update(tmp=env["TMPDIR"], temp=env["TEMP"], there=Path(env["TMPDIR"]).is_dir())
+            return ScannerRun(self.name, "ok")
+
+    (tmp_path / "repo").mkdir()
+    target = Target(name="repo", profile="owned", source=str(tmp_path / "repo"))
+    session.add(target)
+    session.commit()
+    _scan(session, target, settings, [Temp([])])
+    tmp = Path(seen["tmp"])
+    assert seen["there"] and seen["temp"] == seen["tmp"]
+    assert tmp.parent.parent == Path(settings.work_dir) and not tmp.exists()
+    assert proc.clean_env().get("TMPDIR") != seen["tmp"]  # only while the scan runs
+
+
+def test_barkley_names_its_checks_that_didnt_finish(session, settings, monkeypatch, caplog):
+    from fastapi.testclient import TestClient
+
+    from scentry.proc import Result
+    from scentry.web.app import create_app
+
+    report = {
+        "schema_version": 1, "tool": {"version": "0.13.0"}, "score": 0, "complete": False,
+        "verdict": {"label": "BORK BORK BORK"}, "target": {"ref": "v3.45.1"}, "findings": [],
+        "analyzers": [
+            {"name": "semgrep", "state": "ok", "detail": "160 files scanned"},
+            {"name": "npm", "state": "not_applicable", "detail": "no package.json"},
+            {"name": "guarddog", "state": "error",
+             "detail": "x.whl: No usable temporary directory found in ['/tmp']\x07"},
+        ],
+    }  # fmt: skip
+
+    def fake_run(cmd, **kwargs):
+        Path(cmd[cmd.index("-o") + 1]).write_text(json.dumps(report))
+        return Result(0, "", "")
+
+    monkeypatch.setattr("scentry.scanners.barkley.proc.run", fake_run)
+    monkeypatch.setattr(Barkley, "executable", "python")
+    target = Target(name="Agent", profile="ha", source="o/agent")
+    session.add(target)
+    session.commit()
+    scan = _scan(session, target, settings, [Barkley()])
+
+    unfinished = "guarddog (x.whl: No usable temporary directory found in ['/tmp'])"
+    (run,) = scan.scanner_runs
+    assert run["state"] == "ok" and run["unfinished"] == [unfinished]
+    assert run["detail"] == f"sniff-test 0.13.0; didn't finish: {unfinished}"
+    assert not scan.complete and scan.verdict == "BORK BORK BORK"
+    assert "barkley ok: sniff-test 0.13.0; didn't finish: guarddog" in caplog.text
+
+    page = TestClient(create_app(settings)).get(f"/scans/{scan.id}", auth=("admin", "pw")).text
+    assert "Incomplete: what didn&#39;t finish" not in page  # template text isn't escaped
+    assert "Incomplete: what didn't finish is below" in page
+    assert ("<strong>barkley</strong> › guarddog (x.whl: No usable temporary directory "
+            "found in [&#39;/tmp&#39;])") in page
+    assert '<span class="pill warn">incomplete</span>' in page

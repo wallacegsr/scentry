@@ -25,6 +25,16 @@
   again about the packages that scan resolved. The code wasn't fetched again.</p>
 {% endif %}
 {% if scan.error %}<p class="alert error">{{ scan.error }}</p>{% endif %}
+{% if scan.status == "done" and not scan.complete %}
+{# What didn't finish, and why: a scanner that failed, or a check inside one (Barkley's). #}
+<div class="alert warn small"><div>Incomplete: what didn't finish is below, and the result may be missing what it would have found.
+  <ul class="unfinished">
+  {% for r in scan.scanner_runs or [] %}
+    {% if r.state in ("error", "skipped") %}<li><strong>{{ r.name }}</strong> ({{ r.state }}): {{ r.detail }}</li>{% endif %}
+    {% for check in r.unfinished or [] %}<li><strong>{{ r.name }}</strong> › {{ check }}</li>{% endfor %}
+  {% endfor %}
+  </ul></div></div>
+{% endif %}
 {% if scan.notice %}<p class="muted small">Notification: {{ {"sent": "sent", "quiet": "nothing worth one", "stale": "not sent, finished too long before the notifier saw it"}.get(scan.notice, scan.notice) }}</p>{% endif %}
 
 {% if scan.status == "done" and (ai_on or note) %}
@@ -111,7 +121,8 @@
     {% for r in runs.rows %}
       <tr>
         <td class="name">{{ r.name }}</td>
-        <td><span class="pill {{ 'bad' if r.state in ('error', 'skipped') else ('good' if r.state == 'ok' else '') }}">{{ r.state.replace("_", " ") }}</span></td>
+        <td>{% if r.unfinished %}<span class="pill warn">incomplete</span>
+          {%- else %}<span class="pill {{ 'bad' if r.state in ('error', 'skipped') else ('good' if r.state == 'ok' else '') }}">{{ r.state.replace("_", " ") }}</span>{% endif %}</td>
         <td class="num">{{ r.findings }}</td>
         <td class="opt small">{{ r.detail }}</td>
       </tr>

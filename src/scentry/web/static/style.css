@@ -385,3 +385,17 @@ a.download > span { display: grid; gap: 2px; }
 @media (max-width: 900px) { .grid.share { grid-template-columns: minmax(0, 1fr); } }
 textarea.markdown { display: block; width: 100%; min-height: 22rem; resize: vertical; margin-bottom: 10px;
   font-family: ui-monospace, "Cascadia Code", Consolas, Menlo, monospace; font-size: 0.82rem; line-height: 1.45; }
+ul.unfinished { margin: 6px 0 0; padding-left: 18px; overflow-wrap: anywhere; }
+
+/* The Log page */
+.nowrap { white-space: nowrap; }
+table.log td { vertical-align: top; }
+table.log td.message { overflow-wrap: anywhere; min-width: 16rem; }
+table.log td.message .mono { font-size: 0.75rem; margin-top: 2px; }
+table.log details pre { margin: 6px 0 0; font-size: 0.75rem; max-height: 24rem; overflow: auto; }
+.pager { display: flex; justify-content: space-between; gap: 12px; }
+.narrow { display: none; }  /* only where the optional columns are hidden */
+@media (max-width: 720px) {
+  .narrow { display: inline; }
+  table.log td.message { min-width: 12rem; }
+}

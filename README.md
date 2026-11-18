@@ -33,7 +33,9 @@ Rules that hold everywhere:
 
 - **Nothing scanned is ever run, built or installed.**
 - **A scan with a missing, failed or timed-out scanner is marked incomplete** and
-  can't get the top grade.
+  can't get the top grade. So is one where a scanner ran but some of its own checks
+  didn't (Barkley's, each listed in its report). The scan's page says what didn't
+  finish and why, and so does the log.
 - **A repository can't hide code from the scanners.** In-repo ignore and config files
   (in any folder, for the scanners that read them there) and inline `nosemgrep`,
   `nosec`, `gitleaks:allow` and zizmor ignore comments aren't honoured, and zizmor
@@ -71,8 +73,8 @@ watched.
 
 Tabs across the top: **Overview**, **Home Assistant** (what the Marketplace has
 installed), **My code**, **Other integrations** (checked before installing, or since
-removed), **Marketplace** and **System** (Home Assistant, notifications, AI explanations, and
-the exports). The overview shows each tab's grades at a glance, what needs a look
+removed), **Marketplace** and **System** (Home Assistant, notifications, AI explanations, the
+log and the exports). The overview shows each tab's grades at a glance, what needs a look
 (failed scans, low scores, an update that scores worse, critical or high findings) and
 the latest scans. A row leads to its page: a target, then each finding on a page of its
 own.
@@ -95,6 +97,15 @@ someone else's code, the page points to the repository's security page first: so
 exploitable is best reported privately. Text from the scanned code (and the model's)
 comes out as plain text: it can't add links or formatting, or @mention anyone. A secret
 scanner's excerpt is left out, and so is the AI's advice about installing an add-on.
+
+**Log**, from the System tab, is what every service did and what went wrong, in one
+place and newest first: a scanner that didn't finish, a scan that failed, a notification
+that wasn't delivered, a lost connection to Home Assistant, a model that couldn't be
+reached. Search it, show one service, or only warnings and errors; a scan it mentions is
+a link. It holds Scentry's own messages and other software's warnings and errors, not
+each page view; secrets a service holds (tokens, passwords, notification URLs) are
+blanked before a message is kept. It's kept `SCENTRY_LOG_DAYS` days (14). Each
+container's output (`docker compose logs`) still has every line.
 
 ## Install
 
@@ -166,7 +177,8 @@ Everything is an environment variable; `.env.example` lists them with comments.
 | Self-hosted Gitea / GitLab | The same, keyed by your host, plus `SCENTRY_EXTRA_ALLOWED_DOMAINS` |
 | Single sign-on | `SCENTRY_AUTH_MODE=proxy` with `SCENTRY_TRUSTED_PROXIES` |
 | Fewer scanners | `SCENTRY_DISABLED_SCANNERS=["bandit"]` |
-| Smaller box | `SCENTRY_RUNNER_MEMORY`, `SCENTRY_WORK_SIZE` |
+| Smaller box | `SCENTRY_RUNNER_MEMORY`, `SCENTRY_WORK_SIZE` (room for one scan's code and the scanners' temporary files: keep 1g) |
+| A longer or shorter log | `SCENTRY_LOG_DAYS` (14) |
 | Subnet clash with `172.30.255.0/28` | `SCENTRY_EGRESS_SUBNET` and `SCENTRY_EGRESS_IP` |
 | Scan what Home Assistant has installed | `SCENTRY_HASS_URL` and `SCENTRY_HASS_TOKEN`, below |
 | Notifications | `SCENTRY_NOTIFY_URLS`, below |
@@ -380,8 +392,8 @@ never touches scanned code.
   scrubbed environment: no tokens, no database URL. The runner makes itself
   non-dumpable, so a scanner (same user) can't read those from its `/proc` entries
   either. It has no Docker socket, runs as a non-root user with a read-only root
-  filesystem and no capabilities, and keeps scanned code on a non-executable
-  in-memory filesystem. What a subverted scanner could still do is what the runner
+  filesystem and no capabilities, and keeps scanned code (and the scanners' temporary
+  files) on a non-executable in-memory filesystem. What a subverted scanner could still do is what the runner
   can: write to the database, and reach the allowlisted hosts.
 - **egress** is the runner's only route out, and its DNS server. Names on the
   allowlist (`docker/egress/allowlist.txt`) resolve to the gateway, which reads the

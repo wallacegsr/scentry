@@ -94,21 +94,33 @@ class Barkley(Scanner):
                 self.name, "error", f"unsupported report schema {report.get('schema_version')!r}"
             )
         stored = _STORED.search(res.stderr or "") if store else None
+        detail = f"sniff-test {(report.get('tool') or {}).get('version', '?')}"
+        if unfinished := unfinished_checks(report):
+            detail += "; didn't finish: " + "; ".join(unfinished)
         return ScannerRun(
             self.name,
             "ok",
-            detail=f"sniff-test {(report.get('tool') or {}).get('version', '?')}",
+            detail=detail,
             findings=findings_of(report),
             extra={
                 "score": report.get("score"),
                 "verdict": (report.get("verdict") or {}).get("label"),
                 "complete": bool(report.get("complete")),
+                "unfinished": unfinished,
                 "commit_sha": (report.get("target") or {}).get("commit_sha"),
                 "ref": (report.get("target") or {}).get("ref"),
                 "report": {k: v for k, v in report.items() if k not in _DROP},
                 "barkley_id": int(stored[1]) if stored else None,
             },
         )
+
+
+def unfinished_checks(report: dict) -> list[str]:
+    """Barkley's own checks that failed or were skipped, each with why. Barkley itself
+    ran, but they leave its report (and so the scan) incomplete."""
+    return [f"{sarif.clean(a.get('name'), 50)} ({sarif.clean(a.get('detail'), 300)})"
+            for a in report.get("analyzers") or []
+            if isinstance(a, dict) and a.get("state") in ("error", "skipped")]  # fmt: skip
 
 
 def findings_of(report: dict) -> list[RawFinding]:

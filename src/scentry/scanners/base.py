@@ -40,12 +40,15 @@ class ScannerRun:
     extra: dict[str, Any] = field(default_factory=dict)  # scanner-specific (e.g. a verdict)
 
     def summary(self) -> dict[str, Any]:
-        return {
+        out = {
             "name": self.name,
             "state": self.state,
             "detail": self.detail,
             "findings": len(self.findings),
         }
+        if self.extra.get("unfinished"):  # ran, but parts of it didn't (Barkley's checks)
+            out["unfinished"] = self.extra["unfinished"]
+        return out
 
 
 @dataclass(slots=True)

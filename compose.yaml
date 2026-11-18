@@ -37,6 +37,7 @@ services:
       SCENTRY_ADMIN_PASSWORD: ${SCENTRY_ADMIN_PASSWORD:-}
       SCENTRY_PROXY_USER_HEADER: ${SCENTRY_PROXY_USER_HEADER:-Remote-User}
       SCENTRY_TRUSTED_PROXIES: ${SCENTRY_TRUSTED_PROXIES:-}
+      SCENTRY_LOG_DAYS: ${SCENTRY_LOG_DAYS:-14}  # it clears out the log's older messages
     tmpfs: ["/tmp"]
     ports: ["${SCENTRY_BIND:-127.0.0.1}:${SCENTRY_PORT:-8080}:8080"]
     networks: [frontend, backend]
@@ -55,8 +56,10 @@ services:
       SCENTRY_DISABLED_SCANNERS: ${SCENTRY_DISABLED_SCANNERS:-}
       SCENTRY_SEMGREP_CONFIG: ${SCENTRY_SEMGREP_CONFIG:-p/default}
       SCENTRY_HONOR_REPO_IGNORES: ${SCENTRY_HONOR_REPO_IGNORES:-false}
-    # Scanned code lives in memory only and can't be executed from there. tmpfs counts
-    # towards mem_limit, so keep the limit well above the /work size.
+    # Scanned code lives in memory only and can't be executed from there; so do the
+    # scanners' temporary files (in each scan's folder under /work, not in the small
+    # /tmp), and both go when the scan ends. tmpfs counts towards mem_limit, so keep the
+    # limit well above the /work size.
     tmpfs:
       - /tmp:size=256m
       - /work:size=${SCENTRY_WORK_SIZE:-1g},uid=10001,gid=10001,mode=0700

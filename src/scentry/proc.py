@@ -6,6 +6,9 @@ import ctypes
 import os
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,8 +41,25 @@ def keep_secrets_from_children() -> bool:
         return False
 
 
+_TEMP: ContextVar[Path | None] = ContextVar("scentry_temp", default=None)
+
+
+@contextmanager
+def temp_dir(path: Path) -> Iterator[None]:
+    """Programs started within this keep their temporary files in `path` instead of the
+    system's /tmp. A scan's then count against its work folder's size (which has room
+    for them; /tmp is small) and are removed with it."""
+    token = _TEMP.set(path)
+    try:
+        yield
+    finally:
+        _TEMP.reset(token)
+
+
 def clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k in _PASS or k.startswith(_PASS_PREFIX)}
+    if (temp := _TEMP.get()) is not None:
+        env.update(TMPDIR=str(temp), TEMP=str(temp), TMP=str(temp))
     env.update(extra or {})
     return env
 

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, since, when %}
+{% block title %}Log · Scentry{% endblock %}
+{% block main %}
+<nav class="crumbs"><a href="/system">System</a><span class="sep">›</span><span>Log</span></nav>
+
+<div class="page-head">
+  <div class="title">{{ icon("log", 26) }}
+    <div><h1>Log</h1>
+      <div class="sub">What the services did and what went wrong, newest first. Kept {{ log_days }} days.</div></div>
+  </div>
+</div>
+
+<section class="card" id="log">
+  <div class="card-head">
+    <form method="get" action="/log#log" class="search wide" role="search">
+      <label class="search-box">{{ icon("search", 16) }}
+        <input type="search" name="q" value="{{ q }}" placeholder="words in the message, e.g. barkley or scan 12" aria-label="Search the log"></label>
+      <select name="service" aria-label="Service">
+        <option value="" {% if not service %}selected{% endif %}>Every service</option>
+        {% for s in services %}<option value="{{ s }}" {% if service == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select>
+      <select name="level" aria-label="Level">
+        <option value="" {% if not level %}selected{% endif %}>Everything</option>
+        <option value="warning" {% if level == "warning" %}selected{% endif %}>Warnings and errors</option>
+        <option value="error" {% if level == "error" %}selected{% endif %}>Errors</option>
+      </select>
+      <button>Search</button>
+      {% if q or service or level %}<a class="small" href="/log">clear</a>{% endif %}
+    </form>
+  </div>
+  <div class="card-body"><p class="muted small">{{ total }} message{{ "s" if total != 1 }}{% if q or service or level %} match{{ "es" if total == 1 }}{% endif %}.
+    Messages can quote scanned code (names, paths): it's shown as text, never run.</p></div>
+  <div class="table-wrap">
+  <table class="log">
+    <thead><tr><th class="opt">When</th><th class="opt">Service</th><th>Level</th><th>Message</th></tr></thead>
+    <tbody>
+    {% for e in rows %}
+      {% set name = e.level|level_name %}
+      {% set first, _, rest = e.message.partition("\n") %}
+      <tr>
+        <td class="opt nowrap small">{{ since(e.at, now) }}</td>
+        <td class="opt small nowrap">{{ e.service }}</td>
+        <td><span class="pill {{ {'warning': 'warn', 'error': 'bad', 'critical': 'bad'}.get(name, '') }}">{{ name }}</span></td>
+        <td class="message small">{{ first|link_scans }}
+          {% if rest %}<details><summary>{{ rest.count("\n") + 1 }} more line{{ "s" if rest.count("\n") }}</summary><pre>{{ rest }}</pre></details>{% endif %}
+          <div class="muted mono"><span class="narrow">{{ e.service }} · </span>{{ e.logger }} · {{ when(e.at) }}</div></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="empty">{% if q or service or level %}Nothing matches.{% else %}Nothing logged yet.{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if older or newest %}
+  <div class="card-foot pager">
+    {% if newest %}<a href="{{ newest }}#log">« Newest</a>{% endif %}
+    {% if older %}<a href="{{ older }}#log">Older »</a>{% endif %}
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
