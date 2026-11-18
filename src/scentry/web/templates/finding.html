@@ -84,6 +84,10 @@
       <label class="field">Bring it back for review in
         <span class="inline"><input name="days" type="number" min="0" value="{{ default_days }}" class="short"> days</span>
         <span class="hint">0: never.</span></label>
+      {% if alike %}
+      <label class="check"><input type="checkbox" name="same_rule" value="1">
+        <span>Also the {{ alike }} other open finding{{ "s" if alike != 1 }} from this rule in {{ target.name }}, with the same reason and note</span></label>
+      {% endif %}
       <div class="form-actions">
         <button type="button" class="ghost" popovertarget="suppress" popovertargetaction="hide">Cancel</button>
         <button>Suppress</button></div>

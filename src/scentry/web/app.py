@@ -16,9 +16,10 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import urlencode, urlsplit
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -75,6 +76,7 @@ def _graded(scans: list[Scan], version: str | None) -> Scan | None:
 REFRESH_SECONDS = 10
 CATALOG_PAGE = 50  # search results shown
 LOG_PAGE = 100  # log messages on a page
+PICK_MAX = 500  # findings suppressed at once
 LOG_LEVELS = {"warning": logging.WARNING, "error": logging.ERROR}  # the Log page's filter
 # Barkley's comparison buckets, in its order, as the scan page names them.
 DIFF_GROUPS = {"findings": "findings", "flows": "data flows", "data": "data read",
@@ -155,6 +157,25 @@ def scan_links(text: str) -> list[tuple[str, int | None]]:
 
 def level_name(level: int) -> str:
     return logging.getLevelName(level).lower() if level in LEVEL_NAMES else str(level)
+
+
+def suppression_problem(reason: str, days: int) -> str | None:
+    if reason not in SUPPRESSION_REASONS:
+        return "A suppression needs a reason and a justification."
+    if days < 0:
+        return "Days can't be negative (0 is permanent)."
+    return None
+
+
+def suppress_findings(chosen: list[tuple[Finding, str]], reason: str, days: int,
+                      user: str) -> None:
+    """Suppress each finding with its note. 0 days: for good; otherwise each comes back
+    for review when the time is up."""
+    until = utcnow() + datetime.timedelta(days=min(days, 3650)) if days > 0 else None
+    for finding, note in chosen:
+        finding.status, finding.suppressed_by, finding.suppressed_until = (
+            "suppressed", user, until)  # fmt: skip
+        finding.suppression_reason, finding.suppression_note = reason, note.strip()[:2000]
 
 
 def bucket(score: int | None) -> str:
@@ -745,8 +766,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "where": lambda f: ((f.file or "").lower(), f.line or 0)
                             if f.file else None,
                             "scanner": lambda f: (f.scanner, f.rule_id),
-                            "seen": lambda f: f.first_seen_at},
-                     desc_first=("seen",),
+                            "seen": lambda f: f.first_seen_at,
+                            "last": lambda f: f.last_seen_at},
+                     desc_first=("seen", "last"),
                      text=lambda f: [f.title, f.scanner, f.rule_id, f.file, f.severity,
                                      f.message, f.suppression_note])  # fmt: skip
         why_table = view(params, why or [], prefix="why_", anchor="grade",
@@ -766,7 +788,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         notifier = session.get(NotifyState, 1)
         tab = category(target)
         here = urlencode([(k, v) for k, v in params.multi_items() if k != "refresh"])
+        # Ticking every open finding the table shows (after a search, say): no scripts.
+        unticked = [(k, v) for k, v in params.multi_items() if k not in ("select", "refresh")]
         return page(request, session, "target.html", tab=tab, target=target, table=table,
+                    picking=status == "open", ticked=params.get("select") == "all",
+                    tick_all=f"?{urlencode([*unticked, ('select', 'all')])}#findings",
+                    untick=f"?{urlencode(unticked)}#findings",
                     why_table=why_table, scans=scans, counts=counts, notes=notes,
                     ai_on=ai.enabled(session),
                     notifier=notifier, defaults=(notifier.defaults if notifier else None) or {},
@@ -792,8 +819,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         now = utcnow()
         note = ai.note_for(session, "finding", finding.id)
         asking = bool(note and note.status in ai.PENDING)
+        alike = len(_alike(session, finding)) if finding.status == "open" else 0
         return page(request, session, "finding.html", tab=category(finding.target),
-                    f=finding, target=finding.target, note=note,
+                    f=finding, target=finding.target, note=note, alike=alike,
                     twin=session.get(Finding, finding.same_as) if finding.same_as else None,
                     seen_in=session.get(Scan, finding.last_seen_scan_id)
                     if finding.last_seen_scan_id else None,
@@ -962,25 +990,80 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         reason: str = Form(...),
         note: str = Form(...),
         days: int = Form(DEFAULT_SUPPRESSION_DAYS),
+        same_rule: str = Form(""),  # also the target's other open findings from this rule
         session: Session = session_dep,
         user: str = user_dep,
     ):
         finding = session.get(Finding, finding_id)
         if finding is None:
             raise HTTPException(404)
-        if reason not in SUPPRESSION_REASONS or not note.strip():
-            raise HTTPException(400, "A suppression needs a reason and a justification.")
-        if days < 0:
-            raise HTTPException(400, "Days can't be negative (0 is permanent).")
-        finding.status = "suppressed"
-        finding.suppression_reason, finding.suppression_note = reason, note.strip()[:2000]
-        finding.suppressed_by = user
-        # 0 days = permanent; anything else comes back for review when it expires.
-        finding.suppressed_until = (
-            utcnow() + datetime.timedelta(days=min(days, 3650)) if days > 0 else None
-        )
+        problem = suppression_problem(reason, days)
+        if problem or not note.strip():
+            raise HTTPException(400, problem or "A suppression needs a reason and a justification.")
+        chosen = [finding, *(_alike(session, finding) if same_rule else [])]
+        suppress_findings([(f, note) for f in chosen], reason, days, user)
         session.commit()
         return RedirectResponse(f"/targets/{finding.target_id}#findings", 303)
+
+    def _alike(session: Session, finding: Finding) -> list[Finding]:
+        """The target's other open findings from the same scanner and rule."""
+        return list(session.scalars(select(Finding).where(
+            Finding.target_id == finding.target_id, Finding.status == "open",
+            Finding.scanner == finding.scanner, Finding.rule_id == finding.rule_id,
+            Finding.id != finding.id)))  # fmt: skip
+
+    def _picked(session: Session, target: Target, ids: list[int]) -> list[Finding]:
+        """The target's open findings among `ids`, the worst first. Other ids (another
+        target's, or no longer open) are left out."""
+        if not ids:
+            return []
+        found = session.scalars(select(Finding).where(
+            Finding.target_id == target.id, Finding.status == "open",
+            Finding.id.in_(ids[:PICK_MAX]))).all()  # fmt: skip
+        return sorted(found, key=lambda f: (SEVERITY_RANK.get(f.severity, 9), f.scanner,
+                                            f.rule_id, f.file or "", f.line or 0))  # fmt: skip
+
+    @app.get("/targets/{target_id}/suppress")
+    def suppress_many_page(request: Request, target_id: int,
+                           ids: Annotated[list[int] | None, Query()] = None,
+                           session: Session = session_dep, user: str = user_dep):  # fmt: skip
+        """Suppressing the findings ticked on the target's page: one reason, and one note
+        for all of them or one of its own for each."""
+        target = get_target(session, target_id)
+        return page(request, session, "suppress.html", tab=category(target), target=target,
+                    found=_picked(session, target, ids or []), reason="", note="",
+                    days=DEFAULT_SUPPRESSION_DAYS, own={}, problem="", user=user)  # fmt: skip
+
+    @app.post("/targets/{target_id}/suppress")
+    def suppress_many(request: Request, target_id: int,
+                      ids: Annotated[list[int] | None, Form()] = None,
+                      notes: Annotated[list[str] | None, Form()] = None,
+                      reason: str = Form(""), note: str = Form(""),
+                      days: int = Form(DEFAULT_SUPPRESSION_DAYS),
+                      session: Session = session_dep, user: str = user_dep):  # fmt: skip
+        """Each ticked finding comes with its own note field (`notes`, in the same order as
+        `ids`): left empty, the note for all of them stands."""
+        target = get_target(session, target_id)
+        ids, notes = ids or [], notes or []
+        if len(notes) != len(ids):
+            raise HTTPException(400, "Each finding comes with a field for its own note.")
+        own = {i: n.strip()[:2000] for i, n in zip(ids, notes, strict=True)}
+        found = _picked(session, target, ids)
+        problem = suppression_problem(reason, days)
+        if not found:
+            problem = "None of these findings is open any more."
+        elif not problem and (bare := sum(not (own.get(f.id) or note.strip()) for f in found)):
+            problem = (f"{bare} of them {'has' if bare == 1 else 'have'} no note: write one "
+                       "for all of them, or one for each.")
+        if problem:  # the page again, with what was written; nothing is suppressed
+            response = page(request, session, "suppress.html", tab=category(target),
+                            target=target, found=found, reason=reason, note=note, days=days,
+                            own=own, problem=problem, user=user)  # fmt: skip
+            response.status_code = 400
+            return response
+        suppress_findings([(f, own.get(f.id) or note) for f in found], reason, days, user)
+        session.commit()
+        return RedirectResponse(f"/targets/{target.id}#findings", 303)
 
     @app.post("/findings/{finding_id}/reopen")
     def reopen(finding_id: int, session: Session = session_dep, user: str = user_dep):

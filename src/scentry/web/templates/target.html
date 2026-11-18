@@ -106,18 +106,33 @@
       </nav></div>
     {{ search(table, "Search findings", "finding") }}
   </div>
+  {% set picking = picking and table.rows %}
+  {% if picking %}
+  {# The ticks below belong to this form (their form attribute): it opens the page that
+     suppresses them, one reason and note for all, or a note of its own for each. #}
+  <form id="pick" method="get" action="/targets/{{ target.id }}/suppress" class="card-body pick-bar">
+    <button class="ghost small">Suppress ticked…</button>
+    <span class="muted small">Tick findings, or <a href="{{ tick_all }}">tick all {{ table.rows|length }} shown</a>
+      {%- if ticked %} · <a href="{{ untick }}">untick</a>{% endif %}.
+      Search first to tick one kind: a rule's name, a file, a scanner.</span>
+  </form>
+  {% endif %}
   <div class="table-wrap">
   <table>
     <thead><tr>
+      {% if picking %}<th class="pick"><span class="sr-only">Tick</span></th>{% endif %}
       {{ th(table, "severity", "Severity") }}
       {{ th(table, "title", "Problem") }}
       {{ th(table, "where", "Where", "opt") }}
       {{ th(table, "scanner", "Scanner", "opt") }}
       {{ th(table, "seen", "First seen", "opt") }}
+      {{ th(table, "last", "Last seen", "opt") }}
     </tr></thead>
     <tbody>
     {% for f in table.rows %}
       <tr class="link">
+        {% if picking %}<td class="pick"><input type="checkbox" class="above" name="ids" value="{{ f.id }}" form="pick"
+          aria-label="Tick {{ f.title }}{% if f.file %} in {{ f.file }}{% endif %}" {% if ticked %}checked{% endif %}></td>{% endif %}
         <td>{{ sev(f.severity) }}</td>
         <td><a class="row-link name" href="/findings/{{ f.id }}">{{ f.title }}</a>
           <div class="sub">{{ f.rule_id }}
@@ -127,9 +142,10 @@
         <td class="opt small mono">{% if f.file %}{{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}{% else %}<span class="muted">–</span>{% endif %}</td>
         <td class="opt small">{{ f.scanner }}</td>
         <td class="opt small">{{ since(f.first_seen_at, now) }}</td>
+        <td class="opt small">{{ since(f.last_seen_at, now) }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="5" class="empty">{% if table.q %}Nothing matches.{% else %}No {{ status }} findings.{% endif %}</td></tr>
+      <tr><td colspan="6" class="empty">{% if table.q %}Nothing matches.{% else %}No {{ status }} findings.{% endif %}</td></tr>
     {% endfor %}
     </tbody>
   </table>

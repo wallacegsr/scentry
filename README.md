@@ -87,6 +87,12 @@ the header of the overview, each tab and each target, downloads what that page c
 JSON, findings as CSV (open, or all), and for a target SARIF too. Light and dark follow
 the system.
 
+A target's findings show when each was first seen and when a scan last reported it. To
+suppress several at once, tick them on the Open tab (or search, for a rule's name, say,
+and **tick all shown**), then **Suppress ticked…**: one reason and review date for all
+of them, and one note for all, or a note of its own for any of them. A finding's own
+**Suppress** can also take the target's other open findings from the same rule with it.
+
 **Share**, on a finding's page, writes it up as Markdown for a GitHub issue, a security
 advisory or a message: what was found, by which scanner and rule, a link to the line at
 the commit that was scanned, the code excerpt, and, if you choose, the AI explanation,

@@ -70,8 +70,8 @@ class View:
 
 
 # Parameters that are about this one showing of the page, not kept by sorting or searching:
-# a paused refresh, and the add-target form shown again after a mistake.
-ONCE = frozenset({"refresh", "error", "source", "add"})
+# a paused refresh, the add-target form shown again after a mistake, and every row ticked.
+ONCE = frozenset({"refresh", "error", "source", "add", "select"})
 
 
 def view(

@@ -399,3 +399,19 @@ table.log details pre { margin: 6px 0 0; font-size: 0.75rem; max-height: 24rem; 
   .narrow { display: inline; }
   table.log td.message { min-width: 12rem; }
 }
+
+/* Ticking findings, and suppressing them together */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
+  white-space: nowrap; }
+th.pick, td.pick { width: 1%; min-width: 0; padding-right: 0; }
+#findings td.mono { overflow-wrap: anywhere; min-width: 9rem; }  /* a long path wraps */
+td.pick input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); }
+.pick-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--line); }
+ul.picked { list-style: none; margin: 0; padding: 0; }
+ul.picked li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, 22rem); gap: 8px 16px;
+  align-items: center; padding: 12px 18px; border-top: 1px solid var(--line); }
+ul.picked li:first-child { border-top: 0; }
+ul.picked .what { overflow-wrap: anywhere; }
+ul.picked .field.own { font-weight: 400; }
+@media (max-width: 720px) { ul.picked li { grid-template-columns: minmax(0, 1fr); } }

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% from "_macros.html" import sev %}
+{% block title %}Suppress findings · {{ target.name }} · Scentry{% endblock %}
+{% block main %}
+<nav class="crumbs"><a href="/{{ tab }}">{{ tabs[tab] }}</a><span class="sep">›</span>
+  <a href="/targets/{{ target.id }}#findings">{{ target.name }}</a><span class="sep">›</span><span>Suppress findings</span></nav>
+
+<div class="page-head">
+  <div><h1>Suppress {{ found|length }} finding{{ "s" if found|length != 1 }}</h1>
+    <div class="sub">One reason for all of them. A note for all of them, or a note of its own for any of them: its own replaces the one for all.</div></div>
+</div>
+
+{% if problem %}<p class="alert error">{{ problem }}</p>{% endif %}
+
+{% if not found %}
+<section class="card"><div class="card-body">
+  <p>None of the findings you ticked is open. <a href="/targets/{{ target.id }}#findings">Back to {{ target.name }}</a></p>
+</div></section>
+{% else %}
+<form method="post" action="/targets/{{ target.id }}/suppress" class="stack">
+  <section class="card">
+    <div class="card-body stack">
+      <label class="field">Reason
+        <select name="reason">{% for r in reasons %}<option value="{{ r }}" {% if r == reason %}selected{% endif %}>{{ r.replace("_", " ")|capitalize }}</option>{% endfor %}</select>
+      </label>
+      <label class="field">Why, for all of them <input name="note" value="{{ note }}">
+        <span class="hint">Leave it empty if each has its own below.</span></label>
+      <label class="field">Bring them back for review in
+        <span class="inline"><input name="days" type="number" min="0" value="{{ days }}" class="short"> days</span>
+        <span class="hint">0: never.</span></label>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>The findings</h2></div>
+    <ul class="picked">
+    {% for f in found %}
+      <li>
+        <input type="hidden" name="ids" value="{{ f.id }}">
+        <div class="what">{{ sev(f.severity) }} <a href="/findings/{{ f.id }}">{{ f.title }}</a>
+          <div class="sub small muted"><span class="mono">{{ f.rule_id }}</span>
+            {%- if f.file %} · <span class="mono">{{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}</span>{% endif %} · {{ f.scanner }}</div></div>
+        <label class="field own">Its own note <input name="notes" value="{{ own.get(f.id, '') }}" placeholder="optional"></label>
+      </li>
+    {% endfor %}
+    </ul>
+  </section>
+
+  <div class="form-actions">
+    <a class="btn ghost" href="/targets/{{ target.id }}#findings">Cancel</a>
+    <button>Suppress {{ found|length }} finding{{ "s" if found|length != 1 }}</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}
