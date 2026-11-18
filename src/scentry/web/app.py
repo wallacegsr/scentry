@@ -23,7 +23,18 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from scentry import __version__, acquire, ai, db, export, findings, hass_sync, notify, worker
+from scentry import (
+    __version__,
+    acquire,
+    ai,
+    ai_providers,
+    db,
+    export,
+    findings,
+    hass_sync,
+    notify,
+    worker,
+)
 from scentry.config import Settings, get_settings
 from scentry.findings import DEFAULT_SUPPRESSION_DAYS, SUPPRESSION_REASONS
 from scentry.models import (
@@ -221,6 +232,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                  default_days=DEFAULT_SUPPRESSION_DAYS)  # fmt: skip
     templates.env.filters["ago"] = ago
     templates.env.filters["bucket"] = bucket
+    templates.env.filters["ai_label"] = ai_providers.label
+    templates.env.globals["providers"] = ai_providers.PROVIDERS
     user_dep = Depends(make_auth(settings))
     session_dep = Depends(db.get_session)
 
@@ -276,21 +289,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             mail = ("ok", f"{notifier.services} service{'s' if notifier.services != 1 else ''}")
         if not ai_state or not ai_state.configured:
-            claude = ("off", "off")
+            model = ("off", "off")
         elif ai_gone or ai_state.error:
-            claude = ("bad", "not running" if ai_gone else "last request failed")
+            model = ("bad", "not running" if ai_gone else "has a problem")
         else:
-            claude = ("ok", "today's limit used up" if ai_limit else ai_state.model)
+            model = ("ok", "today's limit used up" if ai_limit else ai_state.model)
         waiting = session.execute(
             select(func.count(), func.max(Scan.not_before))
             .where(Scan.status == "queued", Scan.not_before > now)
         ).one()  # fmt: skip
-        chips = [("Home Assistant", *hass), ("Notifications", *mail), ("Claude", *claude)]
+        chips = [("Home Assistant", *hass), ("Notifications", *mail), ("AI", *model)]
         if waiting[0]:
             chips.append(("GitHub", "bad", "API limit used up"))
         return {"sync": sync, "notifier": notifier, "notifier_gone": notifier_gone,
                 "ai_state": ai_state, "ai_gone": ai_gone, "ai_limit": ai_limit,
+                "ai_name": ai_name(ai_state),
                 "waiting": waiting, "chips": chips}  # fmt: skip
+
+    def ai_name(state: AiState | None) -> str:
+        """Who answers explanations, as the pages name it: Claude, or the model's name."""
+        if state is None or not state.configured:
+            return "AI"
+        return ai_providers.label(state.model, state.provider)
+
+    def answering(session: Session) -> str:
+        return f"{ai_name(session.get(AiState, 1))} is answering"
 
     def page(request: Request, session: Session, name: str, **context):
         """A page with the tab bar: each tab's count, and whether a service needs a look."""
@@ -299,6 +322,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for target in session.scalars(select(Target)):
             counts[category(target)] += 1
         state = context.get("state") or services(session, now)
+        context.setdefault("ai_name", state["ai_name"])
         context.update(tab_counts=counts, tabs=TABS,
                        system_alert=any(c[1] == "bad" for c in state["chips"]))  # fmt: skip
         context.setdefault("tab", None)
@@ -463,7 +487,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/system")
     def system(request: Request, session: Session = session_dep, user: str = user_dep):
-        """The other services: Home Assistant, notifications, Claude; and exports."""
+        """The other services: Home Assistant, notifications, AI explanations; and exports."""
         now = utcnow()
         state = services(session, now)
         return page(request, session, "system.html", tab="system", state=state,
@@ -686,14 +710,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                    target.installed_version if tab == "ha" else None),
                     refresh=bool(live or asking) and refresh != "0",
                     paused=bool(live or asking) and refresh == "0",
-                    refresh_what=None if live else "Claude is answering",
+                    refresh_what=None if live else answering(session),
                     refresh_seconds=REFRESH_SECONDS, here=f"?{here}" if here else "?",
                     user=user)  # fmt: skip
 
     @app.get("/findings/{finding_id}")
     def finding_page(request: Request, finding_id: int, refresh: str = "1",
                      session: Session = session_dep, user: str = user_dep):  # fmt: skip
-        """One finding in full: the message, the code excerpt, Claude's explanation, and
+        """One finding in full: the message, the code excerpt, the AI's explanation, and
         suppressing or reopening it."""
         finding = session.get(Finding, finding_id)
         if finding is None:
@@ -709,7 +733,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     ai_on=ai.enabled(session),
                     ai_limit=ai.limit_reached(session.get(AiState, 1), now),
                     refresh=asking and refresh != "0", paused=asking and refresh == "0",
-                    refresh_what="Claude is answering", refresh_seconds=REFRESH_SECONDS,
+                    refresh_what=answering(session), refresh_seconds=REFRESH_SECONDS,
                     here="?", now=now, user=user)  # fmt: skip
 
     @app.post("/targets/{target_id}/scan")
@@ -796,7 +820,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     ai_limit=ai.limit_reached(session.get(AiState, 1), now),
                     refresh=bool(live or asking) and refresh != "0",
                     paused=bool(live or asking) and refresh == "0",
-                    refresh_what=None if live else "Claude is answering",
+                    refresh_what=None if live else answering(session),
                     refresh_seconds=REFRESH_SECONDS, here="?", now=now,
                     user=user)  # fmt: skip
 
@@ -812,7 +836,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/scans/{scan_id}/review")
     def review_scan(scan_id: int, session: Session = session_dep, user: str = user_dep):
-        """Ask Claude to review this scan's result (the ai service answers)."""
+        """Ask the model to review this scan's result (the ai service answers)."""
         scan = session.get(Scan, scan_id)
         if scan is None or scan.status != "done":
             raise HTTPException(404)
@@ -823,7 +847,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/findings/{finding_id}/explain")
     def explain_finding(finding_id: int, session: Session = session_dep, user: str = user_dep):
-        """Ask Claude to explain this finding (the ai service answers)."""
+        """Ask the model to explain this finding (the ai service answers)."""
         finding = session.get(Finding, finding_id)
         if finding is None:
             raise HTTPException(404)

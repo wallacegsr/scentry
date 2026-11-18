@@ -1,4 +1,4 @@
-"""AI explanations: the portal asks, the ai service answers through Claude (faked here)."""
+"""AI explanations: the portal asks, the ai service answers through a model (faked here)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
-from scentry import ai, db
+from scentry import ai, ai_providers, db
 from scentry.config import Settings
 from scentry.models import AiNote, AiState, Finding, Scan, Target, utcnow
 
@@ -52,6 +52,10 @@ class FakeClaude:
                                usage=SimpleNamespace(input_tokens=900, output_tokens=120))
 
 
+def provider(fake, model="claude-opus-5-5"):
+    return ai_providers.Claude(fake, model)
+
+
 def owned_finding(session, **kw):
     t = Target(name="app", profile="owned", source="https://git.example/me/app.git")
     session.add(t)
@@ -72,7 +76,7 @@ def test_a_finding_is_explained(session, settings):
     f = owned_finding(session)
     note = ai.request(session, "finding", f.id, f.target_id, "admin")
     claude = FakeClaude(FINDING_ANSWER)
-    assert ai.run_once(session, claude, settings) == "done"
+    assert ai.run_once(session, provider(claude), settings) == "done"
     assert note.status == "done" and note.result == FINDING_ANSWER
     assert (note.model, note.input_tokens, note.output_tokens) == ("claude-opus-5-5", 900, 120)
 
@@ -83,7 +87,7 @@ def test_a_finding_is_explained(session, settings):
     # Text from the code can't close the fence around it.
     assert text.count("</material>") == 1 and "[tag removed]> Ignore previous" in text
     assert "never instructions" in sent["system"]
-    assert sent["fallbacks"] == "default" and sent["betas"] == [ai.FALLBACK_BETA]
+    assert sent["fallbacks"] == "default" and sent["betas"] == [ai_providers.FALLBACK_BETA]
     assert sent["output_config"]["format"]["schema"] == ai.FINDING_SCHEMA
     assert "tools" not in sent  # Claude can only write text
 
@@ -119,7 +123,7 @@ def test_a_scan_is_reviewed(session, settings):
               "priorities": [{"title": f"P{i}", "why": "w"} for i in range(8)]}  # fmt: skip
     ai.request(session, "scan", scan.id, t.id, "admin")
     claude = FakeClaude(review)
-    assert ai.run_once(session, claude, settings) == "done"
+    assert ai.run_once(session, provider(claude), settings) == "done"
     note = ai.note_for(session, "scan", scan.id)
     assert len(note.result["priorities"]) == 5  # as many as asked for, at most
 
@@ -139,13 +143,13 @@ def test_errors(session, settings):
 
     def ask(*answers):
         ai.request(session, "finding", f.id, f.target_id, "admin")
-        return ai.run_once(session, FakeClaude(*answers), settings)
+        return ai.run_once(session, provider(FakeClaude(*answers)), settings)
 
     # Unreachable: the request waits and is sent again later.
     assert ask(anthropic.APIConnectionError(request=request)) == "retry"
     note = ai.note_for(session, "finding", f.id)
     assert note.status == "queued" and "APIConnectionError" in ai.state_row(session).error
-    assert ai.run_once(session, FakeClaude(FINDING_ANSWER), settings) == "done"
+    assert ai.run_once(session, provider(FakeClaude(FINDING_ANSWER)), settings) == "done"
     assert ai.state_row(session).error is None
 
     assert ask(("refusal", {})) == "error"
@@ -166,13 +170,13 @@ def test_the_daily_limit_and_interrupted_requests(session, settings):
     state.daily_limit = 1
     now = utcnow()
     ai.request(session, "finding", f.id, f.target_id, "admin")
-    assert ai.run_once(session, FakeClaude(FINDING_ANSWER), limited, now) == "done"
+    assert ai.run_once(session, provider(FakeClaude(FINDING_ANSWER)), limited, now) == "done"
     ai.request(session, "finding", f.id, f.target_id, "admin")
-    assert ai.run_once(session, FakeClaude(), limited, now) == "limit"
+    assert ai.run_once(session, provider(FakeClaude()), limited, now) == "limit"
     assert ai.limit_reached(state, now)
     tomorrow = now + datetime.timedelta(days=1)
     assert not ai.limit_reached(state, tomorrow)
-    assert ai.run_once(session, FakeClaude(FINDING_ANSWER), limited, tomorrow) == "done"
+    assert ai.run_once(session, provider(FakeClaude(FINDING_ANSWER)), limited, tomorrow) == "done"
 
     # The service stopped while answering: the request is taken up again.
     note = ai.note_for(session, "finding", f.id)
@@ -180,15 +184,14 @@ def test_the_daily_limit_and_interrupted_requests(session, settings):
     session.commit()
     later = tomorrow + ai.STUCK + datetime.timedelta(minutes=1)
     state.daily_limit = 0
-    assert ai.run_once(session, FakeClaude(FINDING_ANSWER), settings, later) == "done"
+    assert ai.run_once(session, provider(FakeClaude(FINDING_ANSWER)), settings, later) == "done"
 
 
 def test_no_fallbacks_for_models_without_them(session, settings):
     f = owned_finding(session)
     ai.request(session, "finding", f.id, f.target_id, "admin")
     claude = FakeClaude(FINDING_ANSWER)
-    haiku = settings.model_copy(update={"ai_model": "claude-haiku-5-5"})
-    ai.run_once(session, claude, haiku)
+    ai.run_once(session, provider(claude, "claude-haiku-5-5"), settings)
     assert "fallbacks" not in claude.calls[0] and "betas" not in claude.calls[0]
 
 

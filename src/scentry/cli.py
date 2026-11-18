@@ -13,7 +13,7 @@ def main() -> None:
     sub.add_parser("worker", help="run queued and scheduled scans")
     sub.add_parser("hass-sync", help="follow what Home Assistant's Marketplace has installed")
     sub.add_parser("notify", help="send notifications about scan results")
-    sub.add_parser("ai", help="answer requests for AI explanations (needs an Anthropic key)")
+    sub.add_parser("ai", help="answer requests for AI explanations (needs a model set up)")
     sub.add_parser("migrate", help="bring the database to the newest schema (every service "
                                    "also does this when it starts)")  # fmt: skip
     new = sub.add_parser("new-migration", help="development: write a migration for model "

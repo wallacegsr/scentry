@@ -241,7 +241,8 @@ class AiState(Base):
     __tablename__ = "ai_state"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    configured: Mapped[bool] = mapped_column(default=False)  # has a key
+    configured: Mapped[bool] = mapped_column(default=False)  # a model is set up
+    provider: Mapped[str | None] = mapped_column(String(20), default=None)  # anthropic...
     model: Mapped[str | None] = mapped_column(String(100), default=None)
     daily_limit: Mapped[int] = mapped_column(default=0)  # 0: none
     day: Mapped[str | None] = mapped_column(String(10), default=None)  # UTC date of `used`

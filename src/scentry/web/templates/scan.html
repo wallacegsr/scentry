@@ -31,8 +31,8 @@
 <section class="card" id="review">
   <div class="card-head"><h2>{{ icon("spark", 16) }} Review</h2></div>
   <div class="card-body">
-    {{ ai_note(note, "/scans/" ~ scan.id ~ "/review", ai_on, ai_limit, "Review with Claude") }}
-    {% if ai_on and not note %}<p class="muted small">Claude reads what the scanners recorded about this scan (findings,
+    {{ ai_note(note, "/scans/" ~ scan.id ~ "/review", ai_on, ai_limit, "Review with " ~ ai_name, ai_name) }}
+    {% if ai_on and not note %}<p class="muted small">{{ ai_name }} reads what the scanners recorded about this scan (findings,
       messages and the short code excerpts kept with them) and says what matters most. Nothing is sent until you ask.</p>{% endif %}
   </div>
 </section>

@@ -1,30 +1,29 @@
-"""Optional AI explanations: Claude explains a finding, or reviews a scan, when asked.
+"""Optional AI explanations: a model explains a finding, or reviews a scan, when asked.
 
-Off unless SCENTRY_ANTHROPIC_API_KEY is set, and then only on request: the portal records
-what someone asked for (an AiNote), and the ai service, the only one given the key, sends
-Claude what the scanners recorded about it and stores the answer. That is titles, messages
-and the short excerpts of code kept as evidence; never a checkout, never a token.
+Off until a model is set up (ai_providers: Claude, Ollama, or an OpenAI-compatible
+server), and then only on request: the portal records what someone asked for (an AiNote),
+and the ai service, the only one given a key or the model's address, sends the model what
+the scanners recorded about it and stores the answer. That is titles, messages and the
+short excerpts of code kept as evidence; never a checkout, never a token.
 
 The material comes from the scanned code, which may be written to mislead a reviewer. So
-Claude gets no tools (an answer is text, nothing else happens), the material is fenced off
-and named as data, and the portal shows every answer as Claude's, possibly wrong.
+the model gets no tools (an answer is text, nothing else happens), the material is fenced
+off and named as data, and the portal shows every answer as the model's, possibly wrong.
 """
 
 from __future__ import annotations
 
 import datetime
-import json
 import logging
 import re
 import time
-from dataclasses import dataclass
 from typing import Any
 
-import anthropic
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from scentry import db
+from scentry import ai_providers, db
+from scentry.ai_providers import AiError, Provider, Retry
 from scentry.config import Settings, get_settings
 from scentry.models import (
     SEVERITY_RANK,
@@ -44,15 +43,9 @@ HEARTBEAT = datetime.timedelta(minutes=2)  # the portal calls the service gone a
 STUCK = datetime.timedelta(minutes=15)  # a "running" note this old was interrupted
 LOOP_SECONDS = 3
 RETRY_SECONDS = 60  # after an overloaded or unreachable API
-MAX_TOKENS = 16000
 MAX_FINDINGS = 60  # in a scan review; the most severe first
 MESSAGE_CHARS = 800
 EVIDENCE_CHARS = 1500
-
-# Server-side fallback: a request Claude's safety classifiers decline (security material
-# can look like attack work) is answered by the model Anthropic picks for that case.
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
-_FALLBACK_MODELS = ("claude-opus-5", "claude-fable-5", "claude-mythos-5", "claude-sonnet-5-5")
 
 SYSTEM = """\
 You help the person running Scentry, a self-hosted security scanner, understand its \
@@ -124,22 +117,6 @@ advice: what to do next, in 1 to 4 sentences. For their own code: the fixes that
 most. For an add-on: whether it looks fine to install or keep, or what to watch for."""
 
 
-class AiError(Exception):
-    """A request that can't be answered: shown on the note."""
-
-
-class Retry(Exception):
-    """The API couldn't be reached or was busy: try the same request again later."""
-
-
-@dataclass(slots=True)
-class Answer:
-    result: dict[str, Any]
-    model: str
-    input_tokens: int
-    output_tokens: int
-
-
 # --- for the portal -------------------------------------------------------------------------
 
 
@@ -196,7 +173,7 @@ def limit_reached(state: AiState | None, now: datetime.datetime) -> bool:
                 and state.used >= state.daily_limit)  # fmt: skip
 
 
-# --- what Claude is shown -------------------------------------------------------------------
+# --- what the model is shown ----------------------------------------------------------------
 
 _FENCE = re.compile(r"</?\s*material", re.IGNORECASE)
 
@@ -284,75 +261,6 @@ def scan_prompt(session: Session, scan: Scan) -> tuple[str, dict]:
     return text, SCAN_SCHEMA
 
 
-# --- asking Claude --------------------------------------------------------------------------
-
-
-def make_client(settings: Settings) -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=300.0)
-
-
-def _check(value: Any, schema: dict) -> bool:
-    """The answer's shape (structured output guarantees it; this keeps the page safe)."""
-    if schema["type"] == "object":
-        return (isinstance(value, dict) and set(value) == set(schema["required"])
-                and all(_check(value[k], s) for k, s in schema["properties"].items()))
-    if schema["type"] == "array":
-        return isinstance(value, list) and all(_check(v, schema["items"]) for v in value)
-    return isinstance(value, str) and ("enum" not in schema or value in schema["enum"])
-
-
-def ask(client, settings: Settings, text: str, schema: dict) -> Answer:
-    extra: dict[str, Any] = {}
-    if settings.ai_model.startswith(_FALLBACK_MODELS):
-        extra = {"betas": [FALLBACK_BETA], "fallbacks": "default"}
-    try:
-        response = client.beta.messages.create(
-            model=settings.ai_model,
-            max_tokens=MAX_TOKENS,
-            system=SYSTEM,
-            messages=[{"role": "user", "content": text}],
-            output_config={"effort": "medium",
-                           "format": {"type": "json_schema", "schema": schema}},  # fmt: skip
-            **extra,
-        )
-    except (anthropic.RateLimitError, anthropic.InternalServerError,
-            anthropic.APIConnectionError) as e:  # fmt: skip
-        raise Retry(_api_message(e)) from e
-    except anthropic.AuthenticationError as e:
-        raise AiError("Anthropic refused the API key (SCENTRY_ANTHROPIC_API_KEY).") from e
-    except anthropic.APIStatusError as e:
-        if e.status_code >= 500:
-            raise Retry(_api_message(e)) from e
-        raise AiError(_api_message(e)) from e
-
-    if response.stop_reason == "refusal":
-        details = getattr(response, "stop_details", None)
-        category = getattr(details, "category", None)
-        raise AiError("Claude declined to answer" + (f" ({category})" if category else "") + ".")
-    if response.stop_reason == "max_tokens":
-        raise AiError("The answer was cut off.")
-    text_out = next((b.text for b in response.content if b.type == "text"), "")
-    try:
-        result = json.loads(text_out)
-    except ValueError as e:
-        raise AiError("The answer wasn't in the expected form.") from e
-    if not _check(result, schema):
-        raise AiError("The answer wasn't in the expected form.")
-    for key in ("priorities", "noise"):
-        if key in result:
-            result[key] = result[key][:5]
-    usage = response.usage
-    return Answer(result, response.model, usage.input_tokens or 0, usage.output_tokens or 0)
-
-
-def _api_message(e: anthropic.APIError) -> str:
-    status = getattr(e, "status_code", None)
-    body = getattr(e, "body", None)
-    message = body.get("error", {}).get("message") if isinstance(body, dict) else None
-    text = message or e.__class__.__name__
-    return clean(f"{text} (HTTP {status})" if status else text, 300)
-
-
 # --- the service ----------------------------------------------------------------------------
 
 
@@ -363,14 +271,16 @@ def _count(state: AiState, now: datetime.datetime) -> None:
     state.used += 1
 
 
-def run_once(session: Session, client, settings: Settings,
+def run_once(session: Session, provider: Provider, settings: Settings,
              now: datetime.datetime | None = None) -> str:  # fmt: skip
     """Answer the oldest waiting request. Returns "idle", "limit", "done", "error" or "retry"."""
     now = now or utcnow()
     state = state_row(session)
     state.seen_at = now
+    # A slow local model may take longer than STUCK: wait for its timeout, then some.
+    stuck_after = max(STUCK, datetime.timedelta(seconds=settings.ai_timeout + 60))
     for stuck in session.scalars(select(AiNote).where(AiNote.status == "running",
-                                                      AiNote.started_at < now - STUCK)):
+                                                      AiNote.started_at < now - stuck_after)):
         stuck.status = "queued"  # the service stopped while answering it
     note = session.scalar(select(AiNote).where(AiNote.status == "queued")
                           .order_by(AiNote.requested_at, AiNote.id).limit(1))  # fmt: skip
@@ -397,12 +307,13 @@ def run_once(session: Session, client, settings: Settings,
 
     text, schema = build(session, subject)
     try:
-        answer = ask(client, settings, text, schema)
+        answer = provider.ask(SYSTEM, text, schema)
     except Retry as e:
         note.status, note.started_at = "queued", None
         state.error, state.error_at = str(e), utcnow()
         session.commit()
-        log.warning("Claude couldn't be reached, trying again later: %s", e)
+        log.warning("%s couldn't be reached, trying again later: %s",
+                    ai_providers.PROVIDERS[provider.name], e)
         return "retry"
     except AiError as e:
         note.status, note.error, note.finished_at = "error", str(e), utcnow()
@@ -424,24 +335,29 @@ def main(settings: Settings | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = settings or get_settings()
     db.configure(settings.database_url)
-    configured = bool(settings.anthropic_api_key.strip())
+    provider, off = ai_providers.make(settings)
+    problem = provider.check() if provider else None
     with db.SessionLocal() as session:
         state = state_row(session)
-        state.configured, state.model, state.seen_at = configured, settings.ai_model, utcnow()
+        state.configured, state.provider = provider is not None, settings.ai_provider
+        state.model, state.seen_at = (provider.model if provider else None), utcnow()
         state.daily_limit = settings.ai_daily_limit
+        # A fresh start that passes the check clears an old problem from the System tab.
+        state.error, state.error_at = problem, (utcnow() if problem else None)
         session.commit()
-    if not configured:
-        log.info("SCENTRY_ANTHROPIC_API_KEY is not set: AI explanations are off")
+    if provider is None:
+        log.info("AI explanations are off: %s", off)
         while True:  # stay up quietly, so a stack with this service unused is healthy
             time.sleep(3600)
-    log.info("AI explanations on: %s, at most %s requests a day", settings.ai_model,
-             settings.ai_daily_limit or "unlimited")  # fmt: skip
-    client = make_client(settings)
+    if problem:
+        log.warning("%s", problem)
+    log.info("AI explanations on: %s (%s), at most %s requests a day", provider.model,
+             ai_providers.PROVIDERS[provider.name], settings.ai_daily_limit or "unlimited")
     while True:
         outcome = "idle"
         try:
             with db.SessionLocal() as session:
-                outcome = run_once(session, client, settings)
+                outcome = run_once(session, provider, settings)
         except Exception:
             log.exception("ai pass failed")
         if outcome in ("done", "error"):

@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   {#- Plain HTML refresh (the content security policy allows no scripts), only while a
-      scan on this page is waiting or running, or Claude is still answering. -#}
+      scan on this page is waiting or running, or the AI is still answering. -#}
   {% if refresh %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endif %}
 </head>
 <body>

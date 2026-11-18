@@ -64,8 +64,8 @@
 <section class="card" id="explain">
   <div class="card-head"><h2>{{ icon("spark", 16) }} Explanation</h2></div>
   <div class="card-body">
-    {{ ai_note(note, "/findings/" ~ f.id ~ "/explain", ai_on, ai_limit, "Explain with Claude") }}
-    {% if ai_on and not note %}<p class="muted small">Claude reads this finding (its message and the short code excerpt) and says
+    {{ ai_note(note, "/findings/" ~ f.id ~ "/explain", ai_on, ai_limit, "Explain with " ~ ai_name, ai_name) }}
+    {% if ai_on and not note %}<p class="muted small">{{ ai_name }} reads this finding (its message and the short code excerpt) and says
       what it means here and what to do. Nothing is sent until you ask.</p>{% endif %}
   </div>
 </section>

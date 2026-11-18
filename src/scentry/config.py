@@ -80,10 +80,19 @@ class Settings(BaseSettings):
     public_url: str = ""  # the portal's address, for links in messages
 
     # --- AI explanations (the ai service) --------------------------------------------
-    # An Anthropic API key. Unset: off, and the portal offers no explanations. Only the
-    # ai service is given it. Nothing is sent until someone asks for an explanation.
+    # Who answers: anthropic (Claude: needs anthropic_api_key), ollama (a model on an
+    # Ollama server), or openai (any OpenAI-compatible chat API: OpenAI, Gemini,
+    # OpenRouter, LM Studio, vLLM, llama.cpp). Not set up: off, and the portal offers no
+    # explanations. Only the ai service is given these. Nothing is sent until someone
+    # asks for an explanation.
+    ai_provider: Literal["anthropic", "ollama", "openai"] = "anthropic"
     anthropic_api_key: str = ""
-    ai_model: str = "claude-opus-5-5"
+    ai_model: str = ""  # anthropic: claude-opus-5-5 unless set; the others need one
+    # ollama: http://host.docker.internal:11434 unless set; openai: https://api.openai.com/v1
+    ai_base_url: str = ""
+    ai_api_key: str = ""  # openai: the server's key, if it wants one
+    ai_context: int = 32768  # ollama: the context size (tokens) to load the model with
+    ai_timeout: int = 600  # seconds to wait for one answer
     ai_daily_limit: int = 50  # requests per day (UTC); further ones wait for the next day
 
 

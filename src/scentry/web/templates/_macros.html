@@ -118,12 +118,13 @@
 </select>
 {%- endmacro %}
 
-{# Claude's explanation of a finding or review of a scan, and the button that asks for one.
-   Everything in note.result is model output about text from scanned code: shown as text. #}
-{% macro ai_note(note, action, ai_on, ai_limit, label) -%}
+{# The model's explanation of a finding or review of a scan, and the button that asks for
+   one. `name`: who answers now. Everything in note.result is model output about text from
+   scanned code: shown as text. #}
+{% macro ai_note(note, action, ai_on, ai_limit, label, name="AI") -%}
 {% if note and note.status == "done" and note.result %}{% set r = note.result %}
 <div class="ai">
-  <div class="ai-head"><span class="pill accent">{{ icon("spark", 14) }} Claude</span>
+  <div class="ai-head"><span class="pill accent">{{ icon("spark", 14) }} {{ note.model|ai_label }}</span>
     {% if r.real %}<span class="pill {{ {'likely': 'bad', 'unclear': 'warn', 'unlikely': 'good'}.get(r.real, '') }}">{{ {"likely": "looks real", "unlikely": "probably harmless here", "unclear": "can't tell"}[r.real] }}</span>{% endif %}</div>
   {% if r.summary %}<p>{{ r.summary }}</p>{% endif %}
   {% if r.reason %}<p>{{ r.reason }}</p>{% endif %}
@@ -138,10 +139,10 @@
   <p class="muted small">Written by {{ note.model }} {{ when(note.finished_at) }}, asked by {{ note.requested_by or "–" }}, from what the scanners recorded, which includes text from the scanned code. It can be wrong.</p>
 </div>
 {% elif note and note.status in ("queued", "running") %}
-<p class="small ai"><span class="pill accent">{{ icon("spark", 14) }} Claude</span>
+<p class="small ai"><span class="pill accent">{{ icon("spark", 14) }} {{ name }}</span>
   {% if note.status == "running" %}Answering…{% elif ai_limit %}Waiting: today's limit of requests is used up (until midnight UTC).{% else %}Asked {{ when(note.requested_at) }}; the answer appears here.{% endif %}</p>
 {% elif note and note.status == "error" %}
-<p class="small error-text">Claude couldn't explain this: {{ note.error }}</p>
+<p class="small error-text">{{ name }} couldn't answer: {{ note.error }}</p>
 {% endif %}
 {% if ai_on and not (note and note.status in ("queued", "running")) %}
 <form method="post" action="{{ action }}"><button class="btn{{ ' ghost' if note }}">{{ icon("spark", 16) }} {{ label if not note else "Ask again" }}</button></form>

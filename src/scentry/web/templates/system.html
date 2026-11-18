@@ -81,17 +81,22 @@
   </section>
 
   <section class="card">
-    <div class="card-head"><h2>{{ icon("spark", 16) }} AI explanations</h2>{{ status(*chip["Claude"]) }}</div>
+    <div class="card-head"><h2>{{ icon("spark", 16) }} AI explanations</h2>{{ status(*chip["AI"]) }}</div>
     <div class="card-body">
       {% if not ai_state or not ai_state.configured %}
-        <p class="muted small">Off · set SCENTRY_ANTHROPIC_API_KEY on the ai service.</p>
+        <p class="muted small">Off · set up a model on the ai service: Claude (SCENTRY_ANTHROPIC_API_KEY), or a
+          model on Ollama or an OpenAI-compatible server (SCENTRY_AI_PROVIDER). The README's "AI explanations" says how.</p>
       {% else %}
         {% if state.ai_gone %}<p><span class="pill bad">ai service not running</span></p>{% endif %}
         {% if state.ai_limit %}<p><span class="pill warn">today's limit used up</span></p>{% endif %}
-        <p class="small">{{ ai_state.model }} · on request, from a finding or a scan
+        <p class="small">{{ ai_state.model }} · {{ providers.get(ai_state.provider, "Anthropic") }} · on request, from a finding or a scan
           {%- if ai_state.daily_limit %} · {{ ai_state.used if ai_state.day == now.date().isoformat() else 0 }} of {{ ai_state.daily_limit }} today{% endif %}</p>
         {% if ai_state.error %}
           <p class="error-text small">{{ ai_state.error }} ({{ ai_state.error_at|ago(now) }})</p>
+        {% endif %}
+        {% if ai_state.provider not in (none, "anthropic") %}
+          <p class="muted small">A smaller model is easier to mislead with text planted in scanned code, and weaker at
+            security reasoning: read its answers as hints.</p>
         {% endif %}
       {% endif %}
     </div>
