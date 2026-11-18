@@ -532,16 +532,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def as_json(data) -> str:
         return json.dumps(data, indent=2, ensure_ascii=False)
 
+    def export_scope(session: Session, tab: str, target: int | None) -> tuple[set | None, str]:
+        """Which targets an export covers: one, a tab's, or all; and its file name part."""
+        if target is not None:
+            t = get_target(session, target)
+            return {t.id}, t.name
+        if tab in TABS:
+            return {t.id for t in session.scalars(select(Target)) if category(t) == tab}, tab
+        return None, "all"
+
     @app.get("/export.json")
-    def export_everything(session: Session = session_dep, user: str = user_dep):
-        return download(as_json(export.export_all(session)), "application/json",
-                        export.filename("all", "json"))  # fmt: skip
+    def export_everything(tab: str = "", session: Session = session_dep,
+                          user: str = user_dep):  # fmt: skip
+        only, name = export_scope(session, tab, None)
+        return download(as_json(export.export_all(session, only)), "application/json",
+                        export.filename(name, "json"))  # fmt: skip
 
     @app.get("/export/findings.csv")
-    def export_csv(status: str = "", session: Session = session_dep, user: str = user_dep):
+    def export_csv(status: str = "", tab: str = "", target: int | None = None,
+                   session: Session = session_dep, user: str = user_dep):  # fmt: skip
         status = status if status in ("open", "suppressed", "fixed") else ""
-        return download(export.findings_csv(session, status or None), "text/csv; charset=utf-8",
-                        export.filename(f"findings-{status or 'all'}", "csv"))  # fmt: skip
+        only, name = export_scope(session, tab, target)
+        return download(export.findings_csv(session, status or None, only),
+                        "text/csv; charset=utf-8",
+                        export.filename(f"{name}-findings-{status or 'all'}", "csv"))  # fmt: skip
 
     @app.get("/targets/{target_id}/export.json")
     def export_target_json(target_id: int, session: Session = session_dep,

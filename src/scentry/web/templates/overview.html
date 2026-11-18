@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, grade, result, since, th, search %}
+{% from "_macros.html" import icon, grade, result, since, th, search, export_button, export_dialog %}
 {% block title %}Overview · Scentry{% endblock %}
 
 {# One tab's grades as a bar: a rect per grade, as wide as its share. #}
@@ -22,7 +22,13 @@
     <div class="sub">{% set n = summary.values()|sum(attribute="count") %}{{ n }} target{{ "s" if n != 1 }} watched
       </div>
   </div>
+  <div class="actions">{{ export_button() }}</div>
 </div>
+{{ export_dialog("Export everything", [
+  ("Everything (JSON)", "/export.json", "Every target, its findings and current result, with Barkley's report."),
+  ("Open findings (CSV)", "/export/findings.csv?status=open", "A spreadsheet of what is open, every target."),
+  ("All findings (CSV)", "/export/findings.csv", "Open, suppressed and fixed, with each suppression's reason."),
+], "Each tab exports its own targets, and each target's page its own, with SARIF too.") }}
 
 <div class="chips" aria-label="Services">
   {% for name, st, text in state.chips %}

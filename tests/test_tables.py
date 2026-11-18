@@ -136,3 +136,37 @@ def test_findings_lead_to_their_own_page(client):
     assert client.get("/findings/99", auth=AUTH).status_code == 404
     # Removing a target goes back to its tab.
     assert client.post(f"/targets/{tid}/delete", auth=AUTH).headers["location"] == "/code"
+
+
+def test_exports_are_one_click_from_each_page_and_cover_what_it_shows(client):
+    import csv
+    import io
+    import json
+
+    with db.SessionLocal() as s:
+        mine = add(s, "app", "owned", 70)
+        other = add(s, "card", "ha", 90, hacs_kind="card")
+        s.add_all([Finding(target_id=t.id, fingerprint="f", scanner="x", rule_id="r",
+                           title=f"in {t.name}", severity="high") for t in (mine, other)])
+        s.commit()
+        mid, oid = mine.id, other.id
+    for page in ("/", "/code", f"/targets/{mid}"):
+        html = client.get(page, auth=AUTH).text
+        assert 'popovertarget="export"' in html and 'id="export"' in html
+    target = client.get(f"/targets/{mid}", auth=AUTH).text
+    assert f"/targets/{mid}/export.sarif" in target
+    assert f"/export/findings.csv?status=open&amp;target={mid}" in target
+
+    def titles(url):
+        r = client.get(url, auth=AUTH)
+        assert r.status_code == 200 and "attachment" in r.headers["content-disposition"]
+        return {row["title"] for row in csv.DictReader(io.StringIO(r.text))}
+
+    assert titles("/export/findings.csv") == {"in app", "in card"}
+    assert titles(f"/export/findings.csv?target={mid}") == {"in app"}
+    assert titles("/export/findings.csv?tab=others&status=open") == {"in card"}
+    assert titles("/export/findings.csv?tab=code&status=fixed") == set()
+    code = json.loads(client.get("/export.json?tab=code", auth=AUTH).text)
+    assert [t["name"] for t in code["targets"]] == ["app"]
+    assert len(json.loads(client.get("/export.json", auth=AUTH).text)["targets"]) == 2
+    assert client.get(f"/export/findings.csv?target={oid + 50}", auth=AUTH).status_code == 404

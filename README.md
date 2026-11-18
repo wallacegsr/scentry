@@ -77,8 +77,10 @@ own.
 Every table sorts by clicking a column heading and has a search box. Both are done by
 the server, as part of the address, so a sorted or filtered table can be bookmarked.
 **Add a target** is a button on the My code and Other integrations tabs; it, and the
-other forms (notifications, suppressing, removing), open in a pop-up. Light and dark
-follow the system.
+other forms (notifications, suppressing, removing), open in a pop-up. **Export**, in
+the header of the overview, each tab and each target, downloads what that page covers:
+JSON, findings as CSV (open, or all), and for a target SARIF too. Light and dark follow
+the system.
 
 ## Install
 

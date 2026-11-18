@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, result, grade, sevcounts, since, th, search, modal_head, add_target_fields %}
+{% from "_macros.html" import icon, result, grade, sevcounts, since, th, search, modal_head, add_target_fields, export_button, export_dialog %}
 {% block title %}{{ tabs[tab] }} · Scentry{% endblock %}
 {% block main %}
 {% set sync = state.sync %}
@@ -26,6 +26,7 @@
     </div>
   </div>
   <div class="actions">
+    {{ export_button() }}
     {% if tab == "ha" %}
       {% if sync %}<form method="post" action="/hass/sync"><button class="ghost">{{ icon("scan", 16) }} Sync now</button></form>{% endif %}
       <a class="btn" href="/marketplace">{{ icon("marketplace", 16) }} Search the Marketplace</a>
@@ -113,6 +114,12 @@
 {% if tab == "ha" %}
 <p class="foot-note">Scanned at the installed version. An update the Marketplace offers is scanned before you install it.</p>
 {% endif %}
+
+{{ export_dialog("Export " ~ tabs[tab], [
+  (tabs[tab] ~ " (JSON)", "/export.json?tab=" ~ tab, "These targets, their findings and current results."),
+  ("Open findings (CSV)", "/export/findings.csv?status=open&tab=" ~ tab, "A spreadsheet of what is open here."),
+  ("All findings (CSV)", "/export/findings.csv?tab=" ~ tab, "Open, suppressed and fixed, with each suppression's reason."),
+], "Everything, every tab: Export on the Overview.") }}
 
 {% if profile %}
 <div id="add-target" popover class="modal" role="dialog" aria-label="Add a target">

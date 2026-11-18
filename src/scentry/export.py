@@ -146,11 +146,12 @@ def export_target(session: Session, target: Target) -> dict[str, Any]:
     return _envelope(target=target_dict(session, target))
 
 
-def export_all(session: Session) -> dict[str, Any]:
-    """Every target with its findings and current result (and that result's report); the
-    scan history is in each target's own export."""
+def export_all(session: Session, only: set[int] | None = None) -> dict[str, Any]:
+    """Every target (or those in `only`) with its findings and current result (and that
+    result's report); the scan history is in each target's own export."""
     targets = session.scalars(select(Target).order_by(Target.id)).all()
-    return _envelope(targets=[target_dict(session, t, scans=0) for t in targets])
+    return _envelope(targets=[target_dict(session, t, scans=0) for t in targets
+                              if only is None or t.id in only])
 
 
 def sarif(session: Session, target: Target) -> dict[str, Any]:
@@ -218,10 +219,14 @@ def _cell(value: object) -> str:
     return "'" + text if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
 
 
-def findings_csv(session: Session, status: str | None = None) -> str:
+def findings_csv(session: Session, status: str | None = None,
+                 only: set[int] | None = None) -> str:
+    """Findings as a spreadsheet: all, or of one status; of every target, or of `only`."""
     q = select(Finding, Target).join(Target, Target.id == Finding.target_id)
     if status:
         q = q.where(Finding.status == status)
+    if only is not None:
+        q = q.where(Target.id.in_(only))
     rows = sorted(
         session.execute(q).all(),
         key=lambda r: (r[1].name.lower(), SEVERITY_RANK.get(r[0].severity, 9)),

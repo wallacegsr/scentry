@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, choice, grade, result, sev, since, when, th, search, modal_head %}
+{% from "_macros.html" import icon, choice, grade, result, sev, since, when, th, search, modal_head, export_button, export_dialog %}
 {% block title %}{{ target.name }} · Scentry{% endblock %}
 {% block main %}
 <nav class="crumbs"><a href="/{{ tab }}">{{ tabs[tab] }}</a><span class="sep">›</span><span>{{ target.name }}</span></nav>
@@ -32,6 +32,7 @@
     <button class="ghost">{{ icon("eye", 16) }} {{ "Stop scanning new commits" if target.watch_commits else "Scan new commits" }}</button>
   </form>
   {% endif %}
+  {{ export_button() }}
   <button type="button" class="danger ghost" popovertarget="remove">{{ icon("trash", 16) }} Remove</button>
 </div>
 
@@ -160,10 +161,15 @@
     </tbody>
   </table>
   </div>
-  <div class="card-foot small muted">{{ icon("download", 14) }} Export: <a href="/targets/{{ target.id }}/export.json">JSON</a>
-    (findings, scans{{ ", Barkley's reports" if target.profile == "ha" }}) ·
-    <a href="/targets/{{ target.id }}/export.sarif">SARIF</a> (for GitHub code scanning, DefectDojo and the like)</div>
 </section>
+
+{{ export_dialog("Export " ~ target.name, [
+  ("Everything (JSON)", "/targets/" ~ target.id ~ "/export.json",
+   "Findings and scans" ~ (", with Barkley's reports" if target.profile == "ha" else "") ~ "."),
+  ("SARIF", "/targets/" ~ target.id ~ "/export.sarif", "For GitHub code scanning, DefectDojo and the like."),
+  ("Open findings (CSV)", "/export/findings.csv?status=open&target=" ~ target.id, "A spreadsheet of what is open."),
+  ("All findings (CSV)", "/export/findings.csv?target=" ~ target.id, "Open, suppressed and fixed, with each suppression's reason."),
+]) }}
 
 <div id="notify" popover class="modal" role="dialog" aria-label="Notifications">
   {{ modal_head("notify", "Notifications") }}

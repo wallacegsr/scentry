@@ -147,3 +147,24 @@
 <form method="post" action="{{ action }}"><button class="btn{{ ' ghost' if note }}">{{ icon("spark", 16) }} {{ label if not note else "Ask again" }}</button></form>
 {% endif %}
 {%- endmacro %}
+
+{# The Export button in a page's header, and the pop-up it opens: what this page shows,
+   in each format. `items`: (label, href, what it holds). #}
+{% macro export_button() -%}
+<button type="button" class="ghost" popovertarget="export">{{ icon("download", 16) }} Export</button>
+{%- endmacro %}
+
+{% macro export_dialog(title, items, note="") -%}
+<div id="export" popover class="modal" role="dialog" aria-label="Export">
+  {{ modal_head("export", title) }}
+  <div class="modal-body">
+    <ul class="downloads">
+      {% for label, href, what in items %}
+      <li><a class="download" href="{{ href }}" download>{{ icon("download", 18) }}
+        <span><strong>{{ label }}</strong><span class="muted small">{{ what }}</span></span></a></li>
+      {% endfor %}
+    </ul>
+    {% if note %}<p class="muted small">{{ note }}</p>{% endif %}
+  </div>
+</div>
+{%- endmacro %}
