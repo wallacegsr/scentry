@@ -58,12 +58,19 @@ def test_add_target_queues_a_scan_and_escapes_untrusted_text(client):
     page = client.get("/targets/1", auth=AUTH).text
     assert "<script>" not in page and "&lt;script&gt;" in page
     assert "<img src=x" not in page
-    assert "owner/repo" in client.get("/", auth=AUTH).text
+    assert "owner/repo" in client.get("/others", auth=AUTH).text
+    finding = client.get("/findings/1", auth=AUTH).text
+    assert "<script>" not in finding and "&lt;img src=x" in finding
 
 
 def test_bad_target_and_cross_site_post(client):
     r = client.post("/targets", auth=AUTH, data={"profile": "owned", "source": "http://x/y"})
-    assert r.status_code == 303 and r.headers["location"].startswith("/?error=")
+    assert r.status_code == 303 and r.headers["location"].startswith("/code?error=")
+    # Back on its tab: the mistake, and the form again with what was typed.
+    page = client.get(r.headers["location"], auth=AUTH).text
+    assert "clone URL" in page and 'value="http://x/y"' in page
+    r = client.post("/targets", auth=AUTH, data={"profile": "ha", "source": "not a repo"})
+    assert r.headers["location"].startswith("/others?error=")
     r = client.post("/targets", auth=AUTH, data={"profile": "ha", "source": "a/b"},
                     headers={"Sec-Fetch-Site": "cross-site"})  # fmt: skip
     assert r.status_code == 403
@@ -112,7 +119,7 @@ def test_suppress_and_reopen(client):
 def test_installed_section_and_sync_button(client):
     from scentry.models import HassSync, utcnow
 
-    assert "Sync now" not in client.get("/", auth=AUTH).text  # sync not configured
+    assert "Sync now" not in client.get("/ha", auth=AUTH).text  # sync not configured
     with db.SessionLocal() as s:
         s.add(HassSync(id=1, last_ok_at=utcnow(), ha_version="2026.11.2", installed=1,
                        skipped={"theme": 2}, listening=True))  # fmt: skip
@@ -126,14 +133,18 @@ def test_installed_section_and_sync_button(client):
         s.add(Scan(target_id=t.id, ref="1.1.0", status="done", score=30,
                    verdict="BORK BORK BORK", complete=True, finished_at=utcnow()))  # fmt: skip
         s.commit()
-    page = client.get("/", auth=AUTH).text
-    assert "Installed in Home Assistant" in page and "Home Assistant 2026.11.2" in page
+    page = client.get("/ha", auth=AUTH).text
+    assert "1 installed" in page and "Home Assistant 2026.11.2" in page
     assert "2 theme" in page and "watching for installs" in page
     assert page.index("Good Boy") < page.index("BORK BORK BORK")  # installed, then offered
-    assert client.post("/hass/sync", auth=AUTH).status_code == 303
+    # The update scores far lower than what is installed: the overview says so.
+    overview = client.get("/", auth=AUTH).text
+    assert "Needs a look" in overview and "update 1.1.0 scores 30" in overview
+    assert client.post("/hass/sync", auth=AUTH).headers["location"] == "/system"
     with db.SessionLocal() as s:
         assert s.get(HassSync, 1).requested_at is not None
-    assert "Sync requested" in client.get("/", auth=AUTH).text
+    assert "Sync requested" in client.get("/ha", auth=AUTH).text
+    assert "Sync requested" in client.get("/system", auth=AUTH).text
 
 
 def test_marketplace_search_and_scan(client):
@@ -151,7 +162,7 @@ def test_marketplace_search_and_scan(client):
                         description="weather on a card", version="1.0"),
         ])  # fmt: skip
         s.commit()
-    assert "Search the Marketplace" in client.get("/", auth=AUTH).text
+    assert "Search the Marketplace" in client.get("/ha", auth=AUTH).text
 
     page = client.get("/marketplace", auth=AUTH).text
     assert page.index("Clock_Card") < page.index("Weather") < page.index("Forecast")  # stars
@@ -191,11 +202,11 @@ def test_marketplace_search_and_scan(client):
 def test_notifier_status_and_test_button(client):
     from scentry.models import NotifyState, utcnow
 
-    assert "Notifications" not in client.get("/", auth=AUTH).text  # no notify service
+    assert "Send a test" not in client.get("/system", auth=AUTH).text  # no notify service
     with db.SessionLocal() as s:
         s.add(NotifyState(id=1, services=0, invalid_urls=1))
         s.commit()
-    page = client.get("/", auth=AUTH).text
+    page = client.get("/system", auth=AUTH).text
     assert "set SCENTRY_NOTIFY_URLS" in page and "Send a test" not in page
     assert "1 notification URL\n" in page and "is ignored" in page
     with db.SessionLocal() as s:
@@ -203,11 +214,12 @@ def test_notifier_status_and_test_button(client):
         state.services, state.invalid_urls, state.seen_at = 2, 0, utcnow()
         state.error, state.error_at = "Discord: <b>bad</b>", utcnow()
         s.commit()
-    page = client.get("/", auth=AUTH).text
+    page = client.get("/system", auth=AUTH).text
     assert "2 services" in page and "a send failed" in page and "&lt;b&gt;bad" in page
     assert "not running" not in page
+    assert "alert-dot" in page  # the System tab is flagged on every page
     assert client.post("/notify/test", auth=AUTH).status_code == 303
-    assert "Test requested" in client.get("/", auth=AUTH).text
+    assert "Test requested" in client.get("/system", auth=AUTH).text
 
 
 def test_notification_settings_per_target(client):

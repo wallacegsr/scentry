@@ -1,88 +1,125 @@
 {% extends "base.html" %}
-{% from "_macros.html" import ai_note, result, when %}
-{% block title %}Scan {{ scan.id }} · Scentry{% endblock %}
+{% from "_macros.html" import icon, ai_note, result, sev, since, when, th, search %}
+{% block title %}Scan {{ scan.id }} · {{ target.name }} · Scentry{% endblock %}
 {% block main %}
-<p><a href="/targets/{{ target.id }}">← {{ target.name }}</a></p>
-<h1>Scan {{ scan.id }}{% if scan.kind == "recheck" %} <span class="tag">advisories re-checked</span>{% endif %}</h1>
-<p>{{ result(scan, progress.get(scan.id)) }}</p>
-<p class="muted">{{ scan.ref or "" }} {{ scan.commit_sha or "" }} · queued {{ when(scan.queued_at) }} · finished {{ when(scan.finished_at) }}</p>
+<nav class="crumbs"><a href="/{{ tab }}">{{ tabs[tab] }}</a><span class="sep">›</span>
+  <a href="/targets/{{ target.id }}">{{ target.name }}</a><span class="sep">›</span><span>Scan {{ scan.id }}</span></nav>
+
+<div class="page-head">
+  <div>
+    <h1>Scan {{ scan.id }}{% if scan.kind == "recheck" %} <span class="pill">advisories re-checked</span>{% endif %}</h1>
+    <div class="meta">
+      {% if scan.ref or scan.commit_sha %}<span class="mono">{{ scan.ref or "" }} {{ scan.commit_sha or "" }}</span>{% endif %}
+      <span>queued {{ when(scan.queued_at) }}</span><span>finished {{ when(scan.finished_at) }}</span>
+    </div>
+  </div>
+  <div class="grade-block">
+    {% if scan.status == "done" and scan.verdict %}<span class="grade big g-{{ scan.score|bucket }}">{{ scan.verdict }}</span>
+      <span class="score">score {{ scan.score }}{% if not scan.complete %} · incomplete{% endif %}</span>
+    {% else %}{{ result(scan, progress.get(scan.id)) }}{% endif %}
+  </div>
+</div>
+
 {% if rechecked %}
-<p class="small">The advisories of <a href="/scans/{{ rechecked.id }}">scan {{ rechecked.id }}</a> changed: OSV was asked
+<p class="alert small">The advisories of <a href="/scans/{{ rechecked.id }}">scan {{ rechecked.id }}</a> changed: OSV was asked
   again about the packages that scan resolved. The code wasn't fetched again.</p>
 {% endif %}
-{% if scan.error %}<p class="error">{{ scan.error }}</p>{% endif %}
+{% if scan.error %}<p class="alert error">{{ scan.error }}</p>{% endif %}
 {% if scan.notice %}<p class="muted small">Notification: {{ {"sent": "sent", "quiet": "nothing worth one", "stale": "not sent, finished too long before the notifier saw it"}.get(scan.notice, scan.notice) }}</p>{% endif %}
 
 {% if scan.status == "done" and (ai_on or note) %}
-<h2 id="review">Review</h2>
-{{ ai_note(note, "/scans/" ~ scan.id ~ "/review", ai_on, ai_limit, "Review with Claude") }}
-{% if ai_on and not note %}<p class="muted small">Claude reads what the scanners recorded about this scan (findings,
-  messages and the short code excerpts kept with them) and says what matters most. Nothing is sent until you ask.</p>{% endif %}
+<section class="card" id="review">
+  <div class="card-head"><h2>{{ icon("spark", 16) }} Review</h2></div>
+  <div class="card-body">
+    {{ ai_note(note, "/scans/" ~ scan.id ~ "/review", ai_on, ai_limit, "Review with Claude") }}
+    {% if ai_on and not note %}<p class="muted small">Claude reads what the scanners recorded about this scan (findings,
+      messages and the short code excerpts kept with them) and says what matters most. Nothing is sent until you ask.</p>{% endif %}
+  </div>
+</section>
 {% endif %}
 
 {% if scan.diff %}
 {% set d = scan.diff %}
-<h2>What changed since {% if base %}<a href="/scans/{{ base.id }}">{{ base.ref or "scan " ~ base.id }}</a>{% else %}scan {{ scan.diff_from }}{% endif %}</h2>
-{% if d.score and d.score.delta is number %}<p>Score {{ d.score["from"] }} → {{ d.score["to"] }}
-  <span class="{{ 'error-text' if d.score.delta < 0 else 'muted' }}">({{ "%+d"|format(d.score.delta) }})</span></p>{% endif %}
-{% for w in d.warnings or [] %}<p class="muted small">Note: {{ w }}.</p>{% endfor %}
-{% if scan.headline %}
-<ul class="changes">
-  {% for c in scan.headline %}
-  <li><span class="sign">{{ c.sign }}</span>
-    {% if c.severity %}<span class="sev {{ c.severity }}">{{ c.severity }}</span>{% endif %}
-    {{ c.text }}</li>
-  {% endfor %}
-</ul>
-{% else %}
-<p class="muted">Nothing that matters changed.</p>
-{% endif %}
-{% set rest = (d.changes or [])|length - scan.headline|length %}
-{% if d.summary %}
-<p class="muted small">All changes:
-  {% for g, label in groups.items() if g in d.summary %}{% set s = d.summary[g] %}
-  {{ label }} {% if s["+"] %}+{{ s["+"] }}{% endif %} {% if s["-"] %}−{{ s["-"] }}{% endif %} {% if s["~"] %}~{{ s["~"] }}{% endif %}{% if not loop.last %} ·{% endif %}
-  {% endfor %}</p>
-{% endif %}
-{% if rest > 0 %}
-<details>
-  <summary>{{ rest }} smaller change{{ "s" if rest != 1 }}</summary>
-  <ul class="changes">
-    {% for c in d.changes[scan.headline|length:] %}
-    <li><span class="sign">{{ c.sign }}</span>
-      {% if c.severity %}<span class="sev {{ c.severity }}">{{ c.severity }}</span>{% endif %}
-      {{ c.text }}</li>
-    {% endfor %}
-  </ul>
-</details>
-{% endif %}
-<p class="muted small">Barkley's comparison of the two reports. Names and paths in it come from the scanned code.</p>
+<section class="card" id="changes">
+  <div class="card-head">
+    <h2>What changed since {% if base %}<a href="/scans/{{ base.id }}">{{ base.ref or "scan " ~ base.id }}</a>{% else %}scan {{ scan.diff_from }}{% endif %}</h2>
+    {% if d.score and d.score.delta is number %}<span>Score {{ d.score["from"] }} → {{ d.score["to"] }}
+      <span class="{{ 'error-text' if d.score.delta < 0 else 'muted' }}">({{ "%+d"|format(d.score.delta) }})</span></span>{% endif %}
+  </div>
+  <div class="card-body">
+    {% for w in d.warnings or [] %}<p class="muted small">Note: {{ w }}.</p>{% endfor %}
+    {% if scan.headline %}
+    <ul class="changes">
+      {% for c in scan.headline %}
+      <li><span class="sign">{{ c.sign }}</span>
+        {% if c.severity %}{{ sev(c.severity) }}{% endif %}
+        {{ c.text }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">Nothing that matters changed.</p>
+    {% endif %}
+    {% set rest = (d.changes or [])|length - scan.headline|length %}
+    {% if d.summary %}
+    <p class="muted small">All changes:
+      {% for g, label in groups.items() if g in d.summary %}{% set s = d.summary[g] %}
+      {{ label }} {% if s["+"] %}+{{ s["+"] }}{% endif %} {% if s["-"] %}−{{ s["-"] }}{% endif %} {% if s["~"] %}~{{ s["~"] }}{% endif %}{% if not loop.last %} ·{% endif %}
+      {% endfor %}</p>
+    {% endif %}
+    {% if rest > 0 %}
+    <details>
+      <summary>{{ rest }} smaller change{{ "s" if rest != 1 }}</summary>
+      <ul class="changes">
+        {% for c in d.changes[scan.headline|length:] %}
+        <li><span class="sign">{{ c.sign }}</span>
+          {% if c.severity %}{{ sev(c.severity) }}{% endif %}
+          {{ c.text }}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+    <p class="muted small">Barkley's comparison of the two reports. Names and paths in it come from the scanned code.</p>
+  </div>
+</section>
 {% endif %}
 
 {% if scan.barkley_id is not none %}
-<h2>Advisories</h2>
-<p class="small">Asked {{ when(scan.advisories_checked_at or scan.finished_at) }}
-  {%- if scan.advisories_next_at %}; next {{ when(scan.advisories_next_at) }}{% endif %}.
-  {% for s in later %}Changed since: <a href="/scans/{{ s.id }}">scan {{ s.id }}</a>. {% endfor %}</p>
-{% if scan.advisories_error %}<p class="error small">The last re-check couldn't ask: {{ scan.advisories_error }}</p>{% endif %}
-<form method="post" action="/scans/{{ scan.id }}/recheck"><button>Check advisories again</button></form>
-<p class="muted small">The runner asks OSV about this version's packages again once a day, when it has nothing else to do.</p>
+<section class="card" id="advisories">
+  <div class="card-head"><h2>Advisories</h2>
+    <form method="post" action="/scans/{{ scan.id }}/recheck"><button class="ghost small">{{ icon("scan", 14) }} Check advisories again</button></form></div>
+  <div class="card-body">
+    <p class="small">Asked {{ when(scan.advisories_checked_at or scan.finished_at) }}
+      {%- if scan.advisories_next_at %}; next {{ when(scan.advisories_next_at) }}{% endif %}.
+      {% for s in later %}Changed since: <a href="/scans/{{ s.id }}">scan {{ s.id }}</a>. {% endfor %}</p>
+    {% if scan.advisories_error %}<p class="error-text small">The last re-check couldn't ask: {{ scan.advisories_error }}</p>{% endif %}
+    <p class="muted small">The runner asks OSV about this version's packages again once a day, when it has nothing else to do.</p>
+  </div>
+</section>
 {% endif %}
 
-<h2>Scanners</h2>
-<table>
-  <thead><tr><th>Scanner</th><th>State</th><th>Findings</th><th>Detail</th></tr></thead>
-  <tbody>
-  {% for r in scan.scanner_runs %}
-    <tr>
-      <td>{{ r.name }}</td>
-      <td><span class="tag {{ 'bad' if r.state in ('error', 'skipped') else '' }}">{{ r.state.replace("_", " ") }}</span></td>
-      <td>{{ r.findings }}</td>
-      <td class="small">{{ r.detail }}</td>
-    </tr>
-  {% else %}
-    <tr><td colspan="4" class="muted">No scanner has run.</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
+<section class="card" id="scanners">
+  <div class="card-head"><h2>Scanners</h2>{{ search(runs, "Search scanners", "scanner") }}</div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      {{ th(runs, "name", "Scanner") }}
+      {{ th(runs, "state", "State") }}
+      {{ th(runs, "findings", "Findings", "num") }}
+      <th class="opt">Detail</th>
+    </tr></thead>
+    <tbody>
+    {% for r in runs.rows %}
+      <tr>
+        <td class="name">{{ r.name }}</td>
+        <td><span class="pill {{ 'bad' if r.state in ('error', 'skipped') else ('good' if r.state == 'ok' else '') }}">{{ r.state.replace("_", " ") }}</span></td>
+        <td class="num">{{ r.findings }}</td>
+        <td class="opt small">{{ r.detail }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="empty">{% if runs.q %}Nothing matches.{% else %}No scanner has run.{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
 {% endblock %}

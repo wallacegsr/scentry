@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, grade, result, since, th, search %}
+{% block title %}Overview · Scentry{% endblock %}
+
+{# One tab's grades as a bar: a rect per grade, as wide as its share. #}
+{% macro gradebar(grades, total) -%}
+{%- set ns = namespace(x=0) -%}
+<svg class="gradebar" viewBox="0 0 100 10" preserveAspectRatio="none" role="img"
+  aria-label="{% for b in ('a','b','c','d','f','none') if grades.get(b) %}{{ grades[b] }} {{ b.upper() if b != 'none' else 'not graded' }}{{ ', ' if not loop.last }}{% endfor %}">
+  {%- for b in ("a", "b", "c", "d", "f", "none") if grades.get(b) %}
+  {%- set w = grades[b] / total * 100 %}
+  <rect class="fill-{{ b }}" x="{{ '%.3f'|format(ns.x) }}" y="0" width="{{ '%.3f'|format(w) }}" height="10"/>
+  {%- set ns.x = ns.x + w %}
+  {%- endfor %}
+</svg>
+{%- endmacro %}
+
+{% block main %}
+<div class="page-head">
+  <div>
+    <h1>Overview</h1>
+    <div class="sub">{% set n = summary.values()|sum(attribute="count") %}{{ n }} target{{ "s" if n != 1 }} watched
+      </div>
+  </div>
+</div>
+
+<div class="chips" aria-label="Services">
+  {% for name, st, text in state.chips %}
+  <a class="chip {{ st }}" href="/system"><span class="dot"></span>{{ name }} <span class="muted">{{ text }}</span></a>
+  {% endfor %}
+</div>
+
+<div class="grid three">
+  {% for key, label in tabs.items() %}{% set s = summary[key] %}
+  <a class="card stat-card" href="/{{ key }}">
+    <div class="stat-top">
+      <span class="stat-name">{{ icon(key) }}{{ label }}</span>
+      {% if s.busy %}<span class="pill live-pill">{{ s.busy }} scanning</span>{% endif %}
+    </div>
+    <div class="stat-num">{{ s.count }}<small>{{ {"ha": "installed", "code": "repositor" ~ ("ies" if s.count != 1 else "y"), "others": "checked"}[key] }}</small></div>
+    {% if s.count %}
+    {{ gradebar(s.grades, s.count) }}
+    <div class="legend">
+      {% for b in ("a", "b", "c", "d", "f", "none") if s.grades.get(b) %}
+      <span><i class="fill-{{ b }}"></i>{{ s.grades[b] }} {{ b.upper() if b != "none" else "not graded" }}</span>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted small">{{ {"ha": "Connect Home Assistant to scan what the Marketplace installs.",
+      "code": "Add a repository of your own.",
+      "others": "Check an integration or card before you install it."}[key] }}</p>
+    {% endif %}
+    {% set crit = s.sev.get("critical", 0) + s.sev.get("high", 0) %}
+    {% if s.updates or s.failed or crit %}
+    <div class="stat-foot">
+      {% if crit %}<span class="pill bad">{{ crit }} critical or high open</span>{% endif %}
+      {% if s.updates %}<span class="pill accent">{{ s.updates }} update{{ "s" if s.updates != 1 }} offered</span>{% endif %}
+      {% if s.failed %}<span class="pill bad">{{ s.failed }} failed</span>{% endif %}
+    </div>
+    {% endif %}
+  </a>
+  {% endfor %}
+</div>
+
+<section class="card" id="attention">
+  <div class="card-head">
+    <h2>Needs a look</h2>
+    {{ search(flag, "Search these", "target") }}
+  </div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      {{ th(flag, "name", "Name") }}
+      {{ th(flag, "tab", "Where", "opt") }}
+      {{ th(flag, "score", "Result") }}
+      <th>Why</th>
+      {{ th(flag, "last", "Last scan", "opt") }}
+    </tr></thead>
+    <tbody>
+    {% for r in flag.rows %}{% set t = r.target %}
+      <tr class="link">
+        <td><a class="row-link name" href="/targets/{{ t.id }}">{{ t.name }}</a><div class="sub">{{ t.source }}</div></td>
+        <td class="opt small">{{ tabs[r.tab] }}</td>
+        <td>{{ result(r.graded) }}</td>
+        <td class="small">{{ r.why|join(" · ") }}</td>
+        <td class="opt small">{{ since(r.finished.finished_at if r.finished else none, now) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="empty">{% if flag.q %}Nothing matches.{% else %}Nothing needs a look: no failed scans, low scores or critical findings.{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="card" id="recent">
+  <div class="card-head">
+    <h2>Latest scans</h2>
+    {{ search(recent, "Search scans", "scan") }}
+  </div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      {{ th(recent, "target", "Target") }}
+      {{ th(recent, "score", "Result") }}
+      {{ th(recent, "version", "Version", "opt") }}
+      {{ th(recent, "finished", "Finished") }}
+    </tr></thead>
+    <tbody>
+    {% for s in recent.rows %}
+      <tr class="link">
+        <td><a class="row-link name" href="/scans/{{ s.id }}">{{ s.target.name }}</a><div class="sub">{{ tabs[category(s.target)] }}{% if s.kind == "recheck" %} · advisories re-checked{% endif %}</div></td>
+        <td>{{ result(s) }}</td>
+        <td class="opt small mono">{{ s.ref or "" }} {{ (s.commit_sha or "")[:10] }}</td>
+        <td class="small">{{ since(s.finished_at, now) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="empty">{% if recent.q %}Nothing matches.{% else %}No scans yet.{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endblock %}

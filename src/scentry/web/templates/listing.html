@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, result, grade, sevcounts, since, th, search, modal_head, add_target_fields %}
+{% block title %}{{ tabs[tab] }} · Scentry{% endblock %}
+{% block main %}
+{% set sync = state.sync %}
+<div class="page-head">
+  <div class="title">{{ icon(tab, 26) }}
+    <div>
+      <h1>{{ tabs[tab] }}</h1>
+      <div class="sub">
+      {% if tab == "ha" %}
+        {% if not sync %}Not connected: set SCENTRY_HASS_URL and SCENTRY_HASS_TOKEN on the hass-sync service to scan
+          everything the Marketplace (HACS) installs.
+        {% elif sync.error %}<span class="error-text">Not connected: {{ sync.error }}</span> · last successful sync {{ sync.last_ok_at|ago(now) }}
+        {% else %}Home Assistant{% if sync.ha_version %} {{ sync.ha_version }}{% endif %} · synced {{ sync.last_ok_at|ago(now) }}
+          {%- set ni, nc = sync_counts.get("integration", 0), sync_counts.get("card", 0) %}
+          · {{ ni }} integration{{ "s" if ni != 1 }}, {{ nc }} card{{ "s" if nc != 1 }}
+          {%- if sync.skipped %} · not scanned: {% for k, n in sync.skipped|dictsort %}{{ n }} {{ k }}{{ ", " if not loop.last }}{% endfor %}{% endif %}
+          · {{ "watching for installs" if sync.listening else "checking every few minutes" }}
+        {% endif %}
+        {% if sync and sync.requested_at and (not sync.last_attempt_at or sync.requested_at > sync.last_attempt_at) %} · Sync requested…{% endif %}
+      {% elif tab == "code" %}Repositories you own, graded A–F from their open findings.
+      {% else %}Integrations and cards that aren't installed: checked before you install them, or since removed.
+      {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="actions">
+    {% if tab == "ha" %}
+      {% if sync %}<form method="post" action="/hass/sync"><button class="ghost">{{ icon("scan", 16) }} Sync now</button></form>{% endif %}
+      <a class="btn" href="/marketplace">{{ icon("marketplace", 16) }} Search the Marketplace</a>
+    {% else %}
+      {% if tab == "others" %}<a class="btn ghost" href="/marketplace">{{ icon("marketplace", 16) }} Search the Marketplace</a>{% endif %}
+      <button type="button" popovertarget="add-target">{{ icon("plus", 16) }} Add a target</button>
+    {% endif %}
+  </div>
+</div>
+
+{% if error %}
+<section class="card" id="add">
+  <div class="card-head"><h2>Add a target</h2></div>
+  <div class="card-body">
+    <p class="alert error">{{ error }}</p>
+    <form method="post" action="/targets" class="stack">
+      {{ add_target_fields(profile, add_source) }}
+      <div class="form-actions"><a class="btn ghost" href="/{{ tab }}">Cancel</a><button>Add and scan</button></div>
+    </form>
+  </div>
+</section>
+{% endif %}
+
+{% if state.waiting[0] and tab == "others" %}
+<p class="alert warn small">GitHub's API limit is used up: {{ state.waiting[0] }} scan{{ "s" if state.waiting[0] != 1 }} wait until
+  {{ state.waiting[1].strftime("%H:%M") }} UTC. <a href="/system">More</a></p>
+{% endif %}
+
+<section class="card" id="targets">
+  <div class="card-head">
+    <h2>{{ table.total }} {{ {"ha": "installed", "code": "repositor" ~ ("ies" if table.total != 1 else "y"), "others": "checked"}[tab] }}
+      {%- if busy %} <span class="pill live-pill">{{ busy }} scanning</span>{% endif %}</h2>
+    {{ search(table, "Search by name, repository or version", "target") }}
+  </div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      {{ th(table, "name", "Name") }}
+      {% if tab == "ha" %}{{ th(table, "installed", "Installed", "opt") }}{% endif %}
+      {% if tab == "others" %}{{ th(table, "kind", "Kind", "opt") }}{% endif %}
+      {{ th(table, "score", "Result") }}
+      {% if tab == "ha" %}{{ th(table, "update", "Update offered") }}{% endif %}
+      {{ th(table, "open", "Open findings", "opt") }}
+      {{ th(table, "last", "Last scan") }}
+    </tr></thead>
+    <tbody>
+    {% for row in table.rows %}{% set t = row.target %}
+      <tr class="link">
+        <td><a class="row-link name" href="/targets/{{ t.id }}">{{ t.name }}</a>
+          <div class="sub">{{ t.source }}{% if tab != "ha" and t.ref %} @ {{ t.ref }}{% endif %}
+            {%- if tab == "ha" and t.hacs_kind %} · {{ t.hacs_kind }}{% endif %}
+            {%- if t.hacs_removed_at %} · uninstalled {{ t.hacs_removed_at|ago(now) }}{% endif %}</div></td>
+        {% if tab == "ha" %}<td class="opt small mono">{{ t.installed_version or "–" }}</td>{% endif %}
+        {% if tab == "others" %}<td class="opt small">{{ t.hacs_kind or "–" }}</td>{% endif %}
+        <td>{{ result(row.graded) }}</td>
+        {% if tab == "ha" %}
+        <td>{% if t.update_offered %}
+              <span class="small mono">{{ t.available_version }}</span>
+              {% if row.offered and row.offered.status == "done" %}{{ grade(row.offered) }}
+              {% elif row.offered %}{{ result(row.offered) }}
+              {% else %}<span class="muted small">not scanned</span>{% endif %}
+            {% else %}<span class="muted">–</span>{% endif %}</td>
+        {% endif %}
+        <td class="opt">{{ sevcounts(row.sev) }}</td>
+        <td class="small">
+          {%- if row.busy %}{% for s in row.busy %}<span class="pill live-pill">
+            {%- if s.status == "queued" and s.not_before and s.not_before > now %}waiting until {{ s.not_before.strftime("%H:%M") }} UTC
+            {%- else %}{{ s.status }}{% endif %}{% if s.ref %} {{ s.ref }}{% endif %}</span> {% endfor %}
+          {%- elif row.failed %}<span class="pill bad">failed</span> {{ since(row.finished.finished_at, now) }}
+          {%- else %}{{ since(row.finished.finished_at if row.finished else none, now) }}{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="empty">
+        {% if table.q %}Nothing matches “{{ table.q }}”.
+        {% elif tab == "ha" %}Nothing installed through the Marketplace yet{% if not sync %}, or Home Assistant isn't connected{% endif %}.
+        {% elif tab == "code" %}No repositories yet. Add one with “Add a target”.
+        {% else %}Nothing checked yet. Search the Marketplace, or add one by owner/repo.{% endif %}
+      </td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+{% if tab == "ha" %}
+<p class="foot-note">Scanned at the installed version. An update the Marketplace offers is scanned before you install it.</p>
+{% endif %}
+
+{% if profile %}
+<div id="add-target" popover class="modal" role="dialog" aria-label="Add a target">
+  {{ modal_head("add-target", "Add a target") }}
+  <div class="modal-body">
+    <form method="post" action="/targets" class="stack">
+      {{ add_target_fields(profile) }}
+      <div class="form-actions">
+        <button type="button" class="ghost" popovertarget="add-target" popovertargetaction="hide">Cancel</button>
+        <button>{{ icon("scan", 16) }} Add and scan</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

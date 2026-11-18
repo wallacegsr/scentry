@@ -202,7 +202,7 @@ def test_the_portal(settings):
         fid, tid, sid = f.id, f.target_id, f.last_seen_scan_id
 
     # Off: no buttons, and asking is refused.
-    assert "Explain with Claude" not in client.get(f"/targets/{tid}", auth=auth).text
+    assert "Explain with Claude" not in client.get(f"/findings/{fid}", auth=auth).text
     assert client.post(f"/findings/{fid}/explain", auth=auth).status_code == 409
     assert "Review with Claude" not in client.get(f"/scans/{sid}", auth=auth).text
 
@@ -211,11 +211,11 @@ def test_the_portal(settings):
         state.configured, state.model, state.seen_at, state.daily_limit = (
             True, "claude-opus-5-5", utcnow(), 50)  # fmt: skip
         session.commit()
-    assert "claude-opus-5-5" in client.get("/", auth=auth).text
-    assert "Explain with Claude" in client.get(f"/targets/{tid}", auth=auth).text
+    assert "claude-opus-5-5" in client.get("/system", auth=auth).text
+    assert "Explain with Claude" in client.get(f"/findings/{fid}", auth=auth).text
     r = client.post(f"/findings/{fid}/explain", auth=auth)
-    assert r.status_code == 303 and r.headers["location"] == f"/targets/{tid}?status=open#f{fid}"
-    page = client.get(f"/targets/{tid}", auth=auth).text
+    assert r.status_code == 303 and r.headers["location"] == f"/findings/{fid}#explain"
+    page = client.get(f"/findings/{fid}", auth=auth).text
     assert "the answer appears here" in page and "Claude is answering" in page
     assert 'http-equiv="refresh"' in page
 
@@ -224,7 +224,8 @@ def test_the_portal(settings):
         note.status, note.model, note.finished_at = "done", "claude-opus-5-5", utcnow()
         note.result = {**FINDING_ANSWER, "summary": "<script>alert(1)</script>"}
         session.commit()
-    page = client.get(f"/targets/{tid}", auth=auth).text
+    assert "explained" in client.get(f"/targets/{tid}", auth=auth).text  # in the list
+    page = client.get(f"/findings/{fid}", auth=auth).text
     assert "<script>alert(1)" not in page and "&lt;script&gt;" in page  # shown as text
     assert "looks real" in page and "It can be wrong" in page and "Ask again" in page
     assert 'http-equiv="refresh"' not in page
@@ -238,7 +239,7 @@ def test_the_portal(settings):
     with db.SessionLocal() as session:
         session.get(AiState, 1).seen_at = utcnow() - 2 * ai.HEARTBEAT
         session.commit()
-    assert "ai service not running" in client.get("/", auth=auth).text
+    assert "ai service not running" in client.get("/system", auth=auth).text
     # Notes go with their target.
     assert client.post(f"/targets/{tid}/delete", auth=auth).status_code == 303
     with db.SessionLocal() as session:

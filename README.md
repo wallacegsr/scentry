@@ -64,6 +64,22 @@ scanned is queued. It polls rather than waiting for webhooks, so the portal need
 reachable from the internet. Each target's page can switch this off; local paths aren't
 watched.
 
+### The portal
+
+Tabs across the top: **Overview**, **Home Assistant** (what the Marketplace has
+installed), **My code**, **Other integrations** (checked before installing, or since
+removed), **Marketplace** and **System** (Home Assistant, notifications, Claude, and
+the exports). The overview shows each tab's grades at a glance, what needs a look
+(failed scans, low scores, an update that scores worse, critical or high findings) and
+the latest scans. A row leads to its page: a target, then each finding on a page of its
+own.
+
+Every table sorts by clicking a column heading and has a search box. Both are done by
+the server, as part of the address, so a sorted or filtered table can be bookmarked.
+**Add a target** is a button on the My code and Other integrations tabs; it, and the
+other forms (notifications, suppressing, removing), open in a pop-up. Light and dark
+follow the system.
+
 ## Install
 
 You need Docker with Compose, about 3 GB of disk for the images, and 4 GB of memory
@@ -162,7 +178,8 @@ Themes and other kinds the scanner doesn't cover are counted but not scanned.
    allows 60 requests an hour without a token, enough for only a few integrations;
    a token raises that to 5,000 and can't read or change anything. When the limit runs
    out anyway, scans wait for it to reset and then carry on.
-4. Restart the stack. The front page shows the connection, and its error if any.
+4. Restart the stack. The Home Assistant and System tabs show the connection, and its
+   error if any.
 
 An admin token can do almost anything in Home Assistant, so it is kept to one place:
 the **hass-sync** container, which reads the Marketplace's list only (names, versions,
@@ -180,7 +197,7 @@ does this as an add-on.
 ### Searching the Marketplace
 
 The list the sync reads holds the whole catalog, not only what is installed, so the
-portal keeps a copy: **Search the Marketplace** on the front page finds any integration
+portal keeps a copy: the **Marketplace** tab finds any integration
 or card by name, owner/repo or a word from its description, and **Scan** checks the
 version the Marketplace would install, before you install it. (Without a version from
 HA, Barkley picks it the way the Marketplace would.) Such a scan isn't repeated unless
@@ -209,7 +226,7 @@ made before this existed aren't in Barkley's store, so they wait for their resca
 
 Set `SCENTRY_NOTIFY_URLS` to one or more [Apprise](https://github.com/caronc/apprise/wiki)
 URLs, and Scentry tells you when something is worth a look: ntfy, Gotify, Discord,
-Slack, Telegram, Matrix, e-mail, Pushover and about a hundred more. The front page
+Slack, Telegram, Matrix, e-mail, Pushover and about a hundred more. The System tab
 shows whether sending works, and has a **Send a test** button.
 
 What gets a message:
@@ -250,7 +267,7 @@ Optional. Set `SCENTRY_ANTHROPIC_API_KEY` (an API key from the
 [Anthropic Console](https://console.anthropic.com), billed per use) and two buttons
 appear:
 
-- **Explain with Claude** on each finding: what it means, whether it looks real here
+- **Explain with Claude** on each finding's page: what it means, whether it looks real here
   (*looks real*, *probably harmless here*, *can't tell*) and why, and what to do: how to
   fix it in your code, or for an integration you didn't write, whether it matters and
   what your options are.
@@ -265,7 +282,7 @@ token or a password. Answers stay on the page they were asked from; **Ask again*
 replaces one.
 
 Claude is Claude Opus 5.5 by default (`SCENTRY_AI_MODEL`). At most
-`SCENTRY_AI_DAILY_LIMIT` requests a day are sent (50; 0 for no limit); the front page
+`SCENTRY_AI_DAILY_LIMIT` requests a day are sent (50; 0 for no limit); the System tab
 shows how many have been used. A finding's explanation is usually a couple of thousand
 tokens; a scan's review with many findings, more. When Claude's safety checks decline a
 request (security findings can read like attack work), Anthropic's fallback model
@@ -306,7 +323,8 @@ touches scanned code.
 
 - **web** serves the portal. It never touches scanned code and holds no tokens. Pages
   are server-rendered with no JavaScript, and the content security policy allows no
-  scripts, because they display text taken from scanned code.
+  scripts (nor inline styles), because they display text taken from scanned code.
+  Sorting and search are links and forms; pop-ups are the browser's own popovers.
 - **runner** takes scans from the queue (the `scans` table, so a restart loses
   nothing). All scanners are baked into its image and run as child processes with a
   scrubbed environment: no tokens, no database URL. It has no Docker socket, runs as a

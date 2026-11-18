@@ -246,8 +246,11 @@ def test_target_page_says_which_finding_it_repeats(tmp_path):
                             same_as=held.id))  # fmt: skip
         session.commit()
         tid, held_id = t.id, held.id
-    page = client.get(f"/targets/{tid}", auth=("admin", "pw")).text
-    assert "same vulnerability" in page and "Already reported by osv-scanner as" in page
+        twin_id = session.scalar(select(Finding.id).where(Finding.same_as == held_id))
+    assert "same vulnerability" in client.get(f"/targets/{tid}", auth=("admin", "pw")).text
+    page = client.get(f"/findings/{twin_id}", auth=("admin", "pw")).text
+    assert "Already reported by osv-scanner as" in page and f"/findings/{held_id}" in page
+    page = client.get(f"/findings/{held_id}", auth=("admin", "pw")).text
     assert "urllib3: CVE-2025-66471 = GHSA-2XPW-W6GG-JR37" in page
     exported = client.get(f"/targets/{tid}/export.json", auth=("admin", "pw")).json()
     same = {f["rule_id"]: f["same_as"] for f in exported["target"]["findings"]}

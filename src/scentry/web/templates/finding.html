@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, ai_note, sev, since, when, modal_head %}
+{% block title %}{{ f.title }} · {{ target.name }} · Scentry{% endblock %}
+{% block main %}
+<nav class="crumbs"><a href="/{{ tab }}">{{ tabs[tab] }}</a><span class="sep">›</span>
+  <a href="/targets/{{ target.id }}?status={{ f.status }}#findings">{{ target.name }}</a><span class="sep">›</span><span>Finding</span></nav>
+
+<div class="page-head">
+  <div>
+    <div class="headline">{{ sev(f.severity) }}
+      <span class="pill {{ {'open': 'bad', 'suppressed': 'warn', 'fixed': 'good'}.get(f.status, '') }}">{{ f.status }}</span></div>
+    <h1>{{ f.title }}</h1>
+    <div class="meta"><span>{{ f.scanner }}</span><span class="mono">{{ f.rule_id }}</span>
+      {% if f.file %}<span class="mono">{{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}</span>{% endif %}</div>
+  </div>
+  <div class="actions">
+    {% if f.status == "open" %}
+    <button type="button" class="ghost" popovertarget="suppress">Suppress</button>
+    {% else %}
+    <form method="post" action="/findings/{{ f.id }}/reopen"><button class="ghost">Reopen</button></form>
+    {% endif %}
+  </div>
+</div>
+
+{% if f.status == "suppressed" %}
+<p class="alert warn small">{{ (f.suppression_reason or "")|replace("_", " ")|capitalize }} by {{ f.suppressed_by }}:
+  {{ f.suppression_note }} · {{ "until " ~ when(f.suppressed_until) if f.suppressed_until else "permanent" }}</p>
+{% endif %}
+
+<div class="grid two">
+  <section class="card">
+    <div class="card-head"><h2>Details</h2></div>
+    <div class="card-body">
+      {% if f.same_as is not none %}
+      <p class="small"><span class="pill">same vulnerability</span> Already reported{% if twin %} by {{ twin.scanner }} as
+        <a href="/findings/{{ twin.id }}"><strong>{{ twin.rule_id }}</strong></a>{% if twin.status != "open" %} ({{ twin.status }}){% endif %}{% endif %}:
+        counted and announced once, there.</p>
+      {% endif %}
+      {% if f.vulns and f.vulns.groups %}
+      <p class="small mono">{% if f.vulns.package %}{{ f.vulns.package }}: {% endif %}
+        {%- for g in f.vulns.groups %}{{ g|join(" = ") }}{{ "; " if not loop.last }}{% endfor %}</p>
+      {% endif %}
+      {% if f.message %}<p>{{ f.message }}</p>{% endif %}
+      {% if f.evidence %}<pre>{{ f.evidence }}</pre>{% endif %}
+      {% if not (f.message or f.evidence) %}<p class="muted">The scanner gave no more detail.</p>{% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>History</h2></div>
+    <div class="card-body">
+      <dl class="facts">
+        <dt>First seen</dt><dd>{{ since(f.first_seen_at, now) }}</dd>
+        <dt>Last seen</dt><dd>{{ since(f.last_seen_at, now) }}{% if seen_in %} · <a href="/scans/{{ seen_in.id }}">scan {{ seen_in.id }}</a>{% endif %}</dd>
+        {% if f.fixed_at %}<dt>Fixed</dt><dd>{{ since(f.fixed_at, now) }}</dd>{% endif %}
+        {% if f.category %}<dt>Category</dt><dd>{{ f.category }}</dd>{% endif %}
+        <dt>Target</dt><dd><a href="/targets/{{ target.id }}">{{ target.name }}</a></dd>
+      </dl>
+    </div>
+  </section>
+</div>
+
+{% if ai_on or note %}
+<section class="card" id="explain">
+  <div class="card-head"><h2>{{ icon("spark", 16) }} Explanation</h2></div>
+  <div class="card-body">
+    {{ ai_note(note, "/findings/" ~ f.id ~ "/explain", ai_on, ai_limit, "Explain with Claude") }}
+    {% if ai_on and not note %}<p class="muted small">Claude reads this finding (its message and the short code excerpt) and says
+      what it means here and what to do. Nothing is sent until you ask.</p>{% endif %}
+  </div>
+</section>
+{% endif %}
+
+{% if f.status == "open" %}
+<div id="suppress" popover class="modal" role="dialog" aria-label="Suppress">
+  {{ modal_head("suppress", "Suppress this finding") }}
+  <div class="modal-body">
+    <form method="post" action="/findings/{{ f.id }}/suppress" class="stack">
+      <label class="field">Reason
+        <select name="reason">{% for r in reasons %}<option value="{{ r }}">{{ r.replace("_", " ")|capitalize }}</option>{% endfor %}</select>
+      </label>
+      <label class="field">Why <input name="note" required></label>
+      <label class="field">Bring it back for review in
+        <span class="inline"><input name="days" type="number" min="0" value="{{ default_days }}" class="short"> days</span>
+        <span class="hint">0: never.</span></label>
+      <div class="form-actions">
+        <button type="button" class="ghost" popovertarget="suppress" popovertargetaction="hide">Cancel</button>
+        <button>Suppress</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

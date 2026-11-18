@@ -1,5 +1,6 @@
 """The portal. Server-rendered, no JavaScript: the content security policy allows no
-scripts at all, because the pages show text taken from scanned code."""
+scripts at all, because the pages show text taken from scanned code. Tables sort and
+search through query parameters (tables.py); pop-ups are the browser's own popovers."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import ipaddress
 import json
 import secrets
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse, Response
@@ -35,6 +36,7 @@ from scentry.models import (
     Target,
     utcnow,
 )
+from scentry.web.tables import view
 
 HERE = Path(__file__).parent
 CSP = (
@@ -99,6 +101,26 @@ def ago(when: datetime.datetime | None, now: datetime.datetime | None = None) ->
     return "just now"
 
 
+# The portal's tabs: what each lists, and the profile a target added there gets.
+TABS = {"ha": "Home Assistant", "code": "My code", "others": "Other integrations"}
+TAB_PROFILE = {"code": "owned", "others": "ha"}
+
+
+def category(target: Target) -> str:
+    """Which tab a target is listed on: installed in Home Assistant, my code, or an
+    integration or card that isn't installed (checked before installing, or removed)."""
+    if target.origin == "hacs" and target.hacs_removed_at is None:
+        return "ha"
+    return "code" if target.profile == "owned" else "others"
+
+
+def bucket(score: int | None) -> str:
+    """A score's colour: the letter grade it would be."""
+    if score is None:
+        return "none"
+    return next(letter for floor, letter in findings.GRADES if score >= floor).lower()
+
+
 def _trusted(host: str, cidrs: list[str]) -> bool:
     try:
         ip = ipaddress.ip_address(host)
@@ -150,6 +172,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.env.globals.update(version=__version__, reasons=SUPPRESSION_REASONS,
                                  default_days=DEFAULT_SUPPRESSION_DAYS)  # fmt: skip
     templates.env.filters["ago"] = ago
+    templates.env.filters["bucket"] = bucket
     user_dep = Depends(make_auth(settings))
     session_dep = Depends(db.get_session)
 
@@ -178,7 +201,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["Referrer-Policy"] = "same-origin"
         return response
 
-    def page(request: Request, name: str, **context):
+    def services(session: Session, now: datetime.datetime) -> dict:
+        """The other services' state, as the System tab and the chips elsewhere show it:
+        each is "ok", "bad" (needs looking at) or "off" (not set up)."""
+        sync = session.get(HassSync, 1)
+        notifier = session.get(NotifyState, 1)
+        ai_state = session.get(AiState, 1)
+        notifier_gone = bool(
+            notifier and notifier.services
+            and (notifier.seen_at is None or now - notifier.seen_at > notify.HEARTBEAT)
+        )  # fmt: skip
+        ai_gone = bool(ai_state and ai_state.configured and (
+            ai_state.seen_at is None or now - ai_state.seen_at > ai.HEARTBEAT))  # fmt: skip
+        ai_limit = ai.limit_reached(ai_state, now)
+        if sync is None:
+            hass = ("off", "not connected")
+        elif sync.error:
+            hass = ("bad", "not connected")
+        else:
+            hass = ("ok", f"synced {ago(sync.last_ok_at, now)}")
+        if not notifier or not notifier.services:
+            mail = ("off", "off")
+        elif notifier_gone or notifier.error or notifier.invalid_urls:
+            mail = ("bad", "not running" if notifier_gone else "a send failed"
+                    if notifier.error else "a URL is unreadable")  # fmt: skip
+        else:
+            mail = ("ok", f"{notifier.services} service{'s' if notifier.services != 1 else ''}")
+        if not ai_state or not ai_state.configured:
+            claude = ("off", "off")
+        elif ai_gone or ai_state.error:
+            claude = ("bad", "not running" if ai_gone else "last request failed")
+        else:
+            claude = ("ok", "today's limit used up" if ai_limit else ai_state.model)
+        waiting = session.execute(
+            select(func.count(), func.max(Scan.not_before))
+            .where(Scan.status == "queued", Scan.not_before > now)
+        ).one()  # fmt: skip
+        chips = [("Home Assistant", *hass), ("Notifications", *mail), ("Claude", *claude)]
+        if waiting[0]:
+            chips.append(("GitHub", "bad", "API limit used up"))
+        return {"sync": sync, "notifier": notifier, "notifier_gone": notifier_gone,
+                "ai_state": ai_state, "ai_gone": ai_gone, "ai_limit": ai_limit,
+                "waiting": waiting, "chips": chips}  # fmt: skip
+
+    def page(request: Request, session: Session, name: str, **context):
+        """A page with the tab bar: each tab's count, and whether a service needs a look."""
+        now = context.setdefault("now", utcnow())
+        counts = dict.fromkeys(TABS, 0)
+        for target in session.scalars(select(Target)):
+            counts[category(target)] += 1
+        state = context.get("state") or services(session, now)
+        context.update(tab_counts=counts, tabs=TABS,
+                       system_alert=any(c[1] == "bad" for c in state["chips"]))  # fmt: skip
+        context.setdefault("tab", None)
         return templates.TemplateResponse(request, name, context)
 
     def get_target(session: Session, target_id: int) -> Target:
@@ -187,67 +262,175 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404)
         return target
 
-    @app.get("/healthz", include_in_schema=False)
-    def healthz():
-        return PlainTextResponse("ok")
-
-    @app.get("/")
-    def index(request: Request, error: str = "", session: Session = session_dep,
-              user: str = user_dep):  # fmt: skip
-        open_counts = dict(
-            session.execute(
-                select(Finding.target_id, func.count())
-                .where(Finding.status == "open")
-                .group_by(Finding.target_id)
-            ).all()
-        )
-        sections: dict[str, list[dict]] = {"installed": [], "owned": [], "ha": []}
-        for target in session.scalars(select(Target).order_by(func.lower(Target.name))):
+    def target_rows(session: Session, targets: list[Target]) -> list[dict]:
+        """What a list shows about each target: its result, what is open, what's running."""
+        open_by: dict[int, dict[str, int]] = {}
+        for target_id, severity, n in session.execute(
+            select(Finding.target_id, Finding.severity, func.count())
+            .where(Finding.status == "open")
+            .group_by(Finding.target_id, Finding.severity)
+        ):  # fmt: skip
+            open_by.setdefault(target_id, {})[severity] = n
+        rows = []
+        for target in targets:
             scans = target.scans  # newest first
-            installed = target.origin == "hacs" and target.hacs_removed_at is None
-            row = {
+            installed = category(target) == "ha"
+            sev = open_by.get(target.id, {})
+            finished = next((s for s in scans if s.status in ("done", "failed")), None)
+            rows.append({
                 "target": target,
+                "tab": category(target),
                 "busy": [s for s in scans if s.status in worker.ACTIVE],
                 "graded": _graded(scans, target.installed_version if installed else None),
                 "offered": (
                     next((s for s in scans if s.ref == target.available_version), None)
                     if installed and target.update_offered else None
                 ),
-                "open": open_counts.get(target.id, 0),
-            }  # fmt: skip
-            key = "installed" if installed else target.profile
-            sections[key].append(row)
-        sync = session.get(HassSync, 1)
+                "open": sum(sev.values()),
+                "sev": sev,
+                "finished": finished,
+                "failed": finished is not None and finished.status == "failed",
+            })  # fmt: skip
+        return rows
+
+    def score_of(row: dict) -> int | None:
+        return row["graded"].score if row["graded"] else None
+
+    def last_of(row: dict) -> datetime.datetime | None:
+        return row["finished"].finished_at if row["finished"] else None
+
+    def row_text(row: dict) -> list[str | None]:
+        t, g = row["target"], row["graded"]
+        return [t.name, t.source, t.ref, t.hacs_kind, t.installed_version,
+                t.available_version, g.verdict if g else None]  # fmt: skip
+
+    def attention(row: dict) -> list[str]:
+        """Why a target belongs on the overview's short list, if it does."""
+        why = []
+        g, offered, sev = row["graded"], row["offered"], row["sev"]
+        if row["failed"]:
+            why.append("its last scan failed")
+        if g and g.score is not None and g.score < 70:
+            why.append(f"scores {g.score}")
+        if g and not g.complete:
+            why.append("a scanner didn't finish")
+        if offered and offered.status == "done" and offered.score is not None and (
+                offered.score < 70 or (g and g.score is not None and offered.score < g.score)):
+            why.append(f"update {row['target'].available_version} scores {offered.score}")
+        bad = sev.get("critical", 0) + sev.get("high", 0)
+        if bad:
+            why.append(f"{bad} critical or high open")
+        return why
+
+    @app.get("/healthz", include_in_schema=False)
+    def healthz():
+        return PlainTextResponse("ok")
+
+    @app.get("/")
+    def overview(request: Request, session: Session = session_dep, user: str = user_dep):
+        """At a glance: each tab's results, what needs a look, the latest scans."""
         now = utcnow()
-        notifier = session.get(NotifyState, 1)
-        notifier_gone = bool(
-            notifier and notifier.services
-            and (notifier.seen_at is None or now - notifier.seen_at > notify.HEARTBEAT)
-        )  # fmt: skip
-        ai_state = session.get(AiState, 1)
-        ai_gone = bool(ai_state and ai_state.configured and (
-            ai_state.seen_at is None or now - ai_state.seen_at > ai.HEARTBEAT))  # fmt: skip
-        waiting = session.execute(
-            select(func.count(), func.max(Scan.not_before))
-            .where(Scan.status == "queued", Scan.not_before > now)
-        ).one()  # fmt: skip
-        return page(request, "index.html", sections=sections, error=error, profiles=PROFILES,
-                    sync=sync, sync_counts=hass_sync.installed_counts(session),
-                    notifier=notifier, notifier_gone=notifier_gone, waiting=waiting,
-                    ai_state=ai_state, ai_gone=ai_gone,
-                    ai_limit=ai.limit_reached(ai_state, now), now=now, user=user)  # fmt: skip
+        targets = session.scalars(select(Target).order_by(func.lower(Target.name))).all()
+        rows = target_rows(session, list(targets))
+        summary = {}
+        for key in TABS:
+            mine = [r for r in rows if r["tab"] == key]
+            grades: dict[str, int] = {}
+            for r in mine:
+                b = bucket(score_of(r)) if r["graded"] else "none"
+                grades[b] = grades.get(b, 0) + 1
+            sev: dict[str, int] = {}
+            for r in mine:
+                for s, n in r["sev"].items():
+                    sev[s] = sev.get(s, 0) + n
+            summary[key] = {
+                "count": len(mine), "grades": grades, "sev": sev,
+                "busy": sum(1 for r in mine if r["busy"]),
+                "updates": sum(1 for r in mine if r["target"].update_offered),
+                "failed": sum(1 for r in mine if r["failed"]),
+            }  # fmt: skip
+        flagged = [{**r, "why": w} for r in rows if (w := attention(r))]
+        flag = view(request.query_params, flagged, prefix="att_", anchor="attention",
+                    sorts={"name": lambda r: r["target"].name, "tab": lambda r: TABS[r["tab"]],
+                           "score": score_of, "last": last_of},
+                    default="score", desc_first=("last",),
+                    text=lambda r: [*row_text(r), *r["why"], TABS[r["tab"]]])  # fmt: skip
+        recent_scans = session.scalars(
+            select(Scan).where(Scan.status.in_(("done", "failed")))
+            .order_by(Scan.finished_at.desc()).limit(12)
+        ).all()  # fmt: skip
+        recent = view(request.query_params, recent_scans, prefix="recent_", anchor="recent",
+                      sorts={"target": lambda s: s.target.name, "score": lambda s: s.score,
+                             "version": lambda s: s.ref, "finished": lambda s: s.finished_at},
+                      default="finished", default_desc=True, desc_first=("score", "finished"),
+                      text=lambda s: [s.target.name, s.ref, s.verdict, s.status,
+                                      TABS[category(s.target)]])  # fmt: skip
+        state = services(session, now)
+        return page(request, session, "overview.html", tab="overview", summary=summary,
+                    flag=flag, recent=recent, state=state, now=now, user=user,
+                    category=category)  # fmt: skip
+
+    @app.get("/ha")
+    def tab_ha(request: Request, error: str = "", session: Session = session_dep,
+               user: str = user_dep):  # fmt: skip
+        return listing(request, session, "ha", error, user)
+
+    @app.get("/code")
+    def tab_code(request: Request, error: str = "", session: Session = session_dep,
+                 user: str = user_dep):  # fmt: skip
+        return listing(request, session, "code", error, user)
+
+    @app.get("/others")
+    def tab_others(request: Request, error: str = "", session: Session = session_dep,
+                   user: str = user_dep):  # fmt: skip
+        return listing(request, session, "others", error, user)
+
+    def listing(request: Request, session: Session, tab: str, error: str, user: str):
+        """One tab's targets, as a table that sorts and searches."""
+        now = utcnow()
+        targets = [t for t in session.scalars(select(Target)) if category(t) == tab]
+        rows = target_rows(session, targets)
+        sorts = {"name": lambda r: r["target"].name, "score": score_of, "last": last_of,
+                 "open": lambda r: tuple(r["sev"].get(s, 0) for s in SEVERITIES)}  # fmt: skip
+        if tab == "ha":
+            sorts["installed"] = lambda r: r["target"].installed_version
+            sorts["kind"] = lambda r: r["target"].hacs_kind
+            sorts["update"] = lambda r: (
+                (r["offered"].score if r["offered"] else None) if r["target"].update_offered
+                else None)  # fmt: skip
+        elif tab == "others":
+            sorts["kind"] = lambda r: r["target"].hacs_kind
+        table = view(request.query_params, rows, sorts=sorts, default="name",
+                     desc_first=("score", "last", "open", "update"), anchor="targets",
+                     text=row_text)  # fmt: skip
+        state = services(session, now)
+        add_open = bool(error) or request.query_params.get("add") == "1"
+        return page(request, session, "listing.html", tab=tab, table=table, error=error,
+                    add_open=add_open, add_source=request.query_params.get("source", ""),
+                    profile=TAB_PROFILE.get(tab), state=state,
+                    sync_counts=hass_sync.installed_counts(session) if tab == "ha" else {},
+                    busy=sum(1 for r in rows if r["busy"]), now=now, user=user)  # fmt: skip
+
+    @app.get("/system")
+    def system(request: Request, session: Session = session_dep, user: str = user_dep):
+        """The other services: Home Assistant, notifications, Claude; and exports."""
+        now = utcnow()
+        state = services(session, now)
+        return page(request, session, "system.html", tab="system", state=state,
+                    sync_counts=hass_sync.installed_counts(session), now=now,
+                    user=user)  # fmt: skip
 
     @app.post("/hass/sync")
     def request_sync(session: Session = session_dep, user: str = user_dep):
         hass_sync.status_row(session).requested_at = utcnow()
         session.commit()
-        return RedirectResponse("/", 303)
+        return RedirectResponse("/system", 303)
 
     @app.post("/notify/test")
     def request_test(session: Session = session_dep, user: str = user_dep):
         notify.state_row(session).test_requested_at = utcnow()
         session.commit()
-        return RedirectResponse("/", 303)
+        return RedirectResponse("/system", 303)
 
     @app.post("/targets")
     def add_target(
@@ -260,6 +443,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         user: str = user_dep,
     ):
         source, ref = source.strip(), ref.strip() or None
+        tab = "code" if profile == "owned" else "others"
         try:
             if profile not in PROFILES:
                 raise acquire.AcquireError("Unknown profile.")
@@ -269,7 +453,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 acquire.validate_source(source, settings)
             acquire.validate_ref(ref)
         except acquire.AcquireError as exc:
-            return RedirectResponse(f"/?error={quote(str(exc))}", 303)
+            back = urlencode({"error": str(exc), "source": source[:300]})
+            return RedirectResponse(f"/{tab}?{back}", 303)
         default = source.removesuffix("/").removesuffix(".git").rsplit("/", 1)[-1]
         target = Target(
             name=name.strip()[:200] or default,
@@ -308,10 +493,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }  # fmt: skip
         graded = {k: _graded(t.scans, None) for k, t in targets.items()}
         busy = {k for k, t in targets.items() if any(s.status in worker.ACTIVE for s in t.scans)}
-        return page(request, "marketplace.html", items=items, total=total, q=q, kind=kind,
-                    targets=targets, graded=graded, busy=busy,
-                    sync=session.get(HassSync, 1), now=utcnow(),
-                    shown=CATALOG_PAGE, user=user)  # fmt: skip
+        # The search itself is the query above (the whole catalog); this sorts what it found.
+        table = view(request.query_params, items, anchor="catalog", default="stars",
+                     default_desc=True, desc_first=("stars", "result"),
+                     sorts={"name": lambda i: i.name, "version": lambda i: i.version,
+                            "stars": lambda i: i.stars,
+                            "result": lambda i: (g.score if (g := graded.get(i.repo.lower()))
+                                                 else None)},
+                     text=lambda i: [i.name, i.repo, i.description])  # fmt: skip
+        return page(request, session, "marketplace.html", tab="marketplace", table=table,
+                    total=total, q=q, kind=kind, targets=targets, graded=graded, busy=busy,
+                    sync=session.get(HassSync, 1), shown=CATALOG_PAGE, user=user)  # fmt: skip
 
     @app.post("/marketplace/scan")
     def marketplace_scan(repo: str = Form(...), session: Session = session_dep,
@@ -369,6 +561,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def target_page(request: Request, target_id: int, status: str = "open", refresh: str = "1",
                     session: Session = session_dep, user: str = user_dep):  # fmt: skip
         target = get_target(session, target_id)
+        status = status if status in ("open", "suppressed", "fixed") else "open"
         now = utcnow()
         live = progress(session, target.scans, now)
         counts = dict(
@@ -381,32 +574,79 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         found = session.scalars(
             select(Finding).where(Finding.target_id == target.id, Finding.status == status)
         ).all()
-        found.sort(key=lambda f: (f.same_as is not None, SEVERITY_RANK.get(f.severity, 9),
-                                  f.scanner, f.file or ""))  # fmt: skip
-        twin_of = {f.id: f for f in session.scalars(select(Finding).where(
-            Finding.id.in_({f.same_as for f in found if f.same_as is not None})))}  # fmt: skip
         why = None
         if target.profile == "owned":
             open_now = found if status == "open" else session.scalars(
                 select(Finding).where(Finding.target_id == target.id,
                                       Finding.status == "open")).all()  # fmt: skip
             why = findings.issues(open_now)
-        notifier = session.get(NotifyState, 1)
         notes = ai.notes_for(session, "finding", (f.id for f in found))
         asking = any(n.status in ai.PENDING for n in notes.values())
-        return page(request, "target.html", target=target, findings=found, counts=counts,
-                    twin_of=twin_of, notes=notes, ai_on=ai.enabled(session),
-                    ai_limit=ai.limit_reached(session.get(AiState, 1), now),
+        params = request.query_params
+        table = view(params, found, anchor="findings", default="severity",
+                     sorts={"severity": lambda f: (f.same_as is not None,
+                                                   SEVERITY_RANK.get(f.severity, 9)),
+                            "title": lambda f: f.title,
+                            "where": lambda f: ((f.file or "").lower(), f.line or 0)
+                            if f.file else None,
+                            "scanner": lambda f: (f.scanner, f.rule_id),
+                            "seen": lambda f: f.first_seen_at},
+                     desc_first=("seen",),
+                     text=lambda f: [f.title, f.scanner, f.rule_id, f.file, f.severity,
+                                     f.message, f.suppression_note])  # fmt: skip
+        why_table = view(params, why or [], prefix="why_", anchor="grade",
+                         default="points", default_desc=True,
+                         desc_first=("points", "places"),
+                         sorts={"severity": lambda i: SEVERITY_RANK.get(i.severity, 9),
+                                "title": lambda i: i.title, "places": lambda i: i.count,
+                                "points": lambda i: i.deduction},
+                         text=lambda i: [i.title, i.scanner, i.rule_id, i.severity,
+                                         *i.also])  # fmt: skip
+        scans = view(params, target.scans[:25], prefix="scans_", anchor="scans",
+                     default="id", default_desc=True, desc_first=("id", "score", "finished"),
+                     sorts={"id": lambda s: s.id, "score": lambda s: s.score,
+                            "version": lambda s: s.ref, "finished": lambda s: s.finished_at},
+                     text=lambda s: [str(s.id), s.ref, s.commit_sha, s.verdict, s.status,
+                                     s.kind])  # fmt: skip
+        notifier = session.get(NotifyState, 1)
+        tab = category(target)
+        here = urlencode([(k, v) for k, v in params.multi_items() if k != "refresh"])
+        return page(request, session, "target.html", tab=tab, target=target, table=table,
+                    why_table=why_table, scans=scans, counts=counts, notes=notes,
+                    ai_on=ai.enabled(session),
                     notifier=notifier, defaults=(notifier.defaults if notifier else None) or {},
-                    severities=SEVERITIES[:-1],
-                    status=status, scans=target.scans[:10], progress=live, why=why,
+                    severities=SEVERITIES[:-1], status=status, progress=live, why=why,
                     deducted=sum(i.deduction for i in why or []),
                     latest=next((s for s in target.scans if s.status == "done"), None),
+                    graded=_graded(target.scans,
+                                   target.installed_version if tab == "ha" else None),
                     refresh=bool(live or asking) and refresh != "0",
                     paused=bool(live or asking) and refresh == "0",
                     refresh_what=None if live else "Claude is answering",
-                    refresh_seconds=REFRESH_SECONDS, here=f"?status={quote(status)}",
+                    refresh_seconds=REFRESH_SECONDS, here=f"?{here}" if here else "?",
                     user=user)  # fmt: skip
+
+    @app.get("/findings/{finding_id}")
+    def finding_page(request: Request, finding_id: int, refresh: str = "1",
+                     session: Session = session_dep, user: str = user_dep):  # fmt: skip
+        """One finding in full: the message, the code excerpt, Claude's explanation, and
+        suppressing or reopening it."""
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise HTTPException(404)
+        now = utcnow()
+        note = ai.note_for(session, "finding", finding.id)
+        asking = bool(note and note.status in ai.PENDING)
+        return page(request, session, "finding.html", tab=category(finding.target),
+                    f=finding, target=finding.target, note=note,
+                    twin=session.get(Finding, finding.same_as) if finding.same_as else None,
+                    seen_in=session.get(Scan, finding.last_seen_scan_id)
+                    if finding.last_seen_scan_id else None,
+                    ai_on=ai.enabled(session),
+                    ai_limit=ai.limit_reached(session.get(AiState, 1), now),
+                    refresh=asking and refresh != "0", paused=asking and refresh == "0",
+                    refresh_what="Claude is answering", refresh_seconds=REFRESH_SECONDS,
+                    here="?", now=now, user=user)  # fmt: skip
 
     @app.post("/targets/{target_id}/scan")
     def scan_now(target_id: int, session: Session = session_dep, user: str = user_dep):
@@ -458,9 +698,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/targets/{target_id}/delete")
     def delete_target(target_id: int, session: Session = session_dep, user: str = user_dep):
-        session.delete(get_target(session, target_id))
+        target = get_target(session, target_id)
+        tab = category(target)
+        session.delete(target)
         session.commit()
-        return RedirectResponse("/", 303)
+        return RedirectResponse(f"/{tab}", 303)
 
     @app.get("/scans/{scan_id}")
     def scan_page(request: Request, scan_id: int, refresh: str = "1",
@@ -474,7 +716,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         asking = bool(note and note.status in ai.PENDING)
         later = session.scalars(select(Scan).where(Scan.recheck_of == scan.id)
                                 .order_by(Scan.id)).all()  # fmt: skip
-        return page(request, "scan.html", scan=scan, target=scan.target, progress=live,
+        order = ("error", "skipped", "timeout", "ok", "not_applicable")
+        runs = view(request.query_params, scan.scanner_runs or [], anchor="scanners",
+                    default="name", desc_first=("findings",),
+                    sorts={"name": lambda r: r.get("name"),
+                           "state": lambda r: (order.index(r.get("state"))
+                                               if r.get("state") in order else 9),
+                           "findings": lambda r: r.get("findings")},
+                    text=lambda r: [r.get("name"), r.get("state"), r.get("detail")])  # fmt: skip
+        return page(request, session, "scan.html", tab=category(scan.target), scan=scan,
+                    target=scan.target, progress=live, runs=runs,
                     base=session.get(Scan, scan.diff_from) if scan.diff_from else None,
                     rechecked=session.get(Scan, scan.recheck_of) if scan.recheck_of else None,
                     later=later, groups=DIFF_GROUPS, note=note, ai_on=ai.enabled(session),
@@ -482,7 +733,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     refresh=bool(live or asking) and refresh != "0",
                     paused=bool(live or asking) and refresh == "0",
                     refresh_what=None if live else "Claude is answering",
-                    refresh_seconds=REFRESH_SECONDS, here="?", user=user)  # fmt: skip
+                    refresh_seconds=REFRESH_SECONDS, here="?", now=now,
+                    user=user)  # fmt: skip
 
     @app.post("/scans/{scan_id}/recheck")
     def recheck_now(scan_id: int, session: Session = session_dep, user: str = user_dep):
@@ -514,8 +766,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not ai.enabled(session):
             raise HTTPException(409, "AI explanations are off.")
         ai.request(session, "finding", finding.id, finding.target_id, user)
-        return RedirectResponse(f"/targets/{finding.target_id}?status={quote(finding.status)}"
-                                f"#f{finding.id}", 303)  # fmt: skip
+        return RedirectResponse(f"/findings/{finding.id}#explain", 303)
 
     @app.post("/findings/{finding_id}/suppress")
     def suppress(
@@ -539,7 +790,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             utcnow() + datetime.timedelta(days=min(days, 3650)) if days > 0 else None
         )
         session.commit()
-        return RedirectResponse(f"/targets/{finding.target_id}", 303)
+        return RedirectResponse(f"/targets/{finding.target_id}#findings", 303)
 
     @app.post("/findings/{finding_id}/reopen")
     def reopen(finding_id: int, session: Session = session_dep, user: str = user_dep):
@@ -548,6 +799,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(404)
         finding.status, finding.suppressed_until, finding.fixed_at = "open", None, None
         session.commit()
-        return RedirectResponse(f"/targets/{finding.target_id}", 303)
+        return RedirectResponse(f"/findings/{finding.id}", 303)
 
     return app

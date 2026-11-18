@@ -1,12 +1,112 @@
+{# Shared pieces. No scripts anywhere: sorting and search are links and GET forms
+   (web/tables.py), pop-ups are the browser's own popovers. #}
+
+{% macro icon(name, size=18) -%}
+<svg class="icon" width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+{%- if name == "overview" %}<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>
+{%- elif name == "ha" %}<path d="M3.5 11 12 4l8.5 7"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5h4v5"/>
+{%- elif name == "code" %}<path d="m8 8-4 4 4 4"/><path d="m16 8 4 4-4 4"/><path d="m13.5 5-3 14"/>
+{%- elif name == "others" %}<path d="m3.5 7.5 8.5-4 8.5 4-8.5 4z"/><path d="M3.5 7.5v9l8.5 4 8.5-4v-9"/><path d="M12 11.5v9"/>
+{%- elif name == "marketplace" %}<path d="M5 8h14l-1.2 12H6.2z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/>
+{%- elif name == "system" %}<path d="M4 6.5h9M17 6.5h3M4 12h3M11 12h9M4 17.5h11M19 17.5h1"/><circle cx="15" cy="6.5" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17.5" r="2"/>
+{%- elif name == "shield" %}<path d="M12 3 19.5 6v5.5c0 4.6-3.2 7.9-7.5 9.5-4.3-1.6-7.5-4.9-7.5-9.5V6z"/><path d="m9 12 2 2 4-4"/>
+{%- elif name == "plus" %}<path d="M12 5v14M5 12h14"/>
+{%- elif name == "scan" %}<path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4.5V9h-4.5"/>
+{%- elif name == "search" %}<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/>
+{%- elif name == "close" %}<path d="m6 6 12 12M18 6 6 18"/>
+{%- elif name == "bell" %}<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>
+{%- elif name == "trash" %}<path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/>
+{%- elif name == "eye" %}<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>
+{%- elif name == "download" %}<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>
+{%- elif name == "spark" %}<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/>
+{%- elif name == "back" %}<path d="m15 5-7 7 7 7"/>
+{%- endif %}
+</svg>
+{%- endmacro %}
+
+{% macro when(dt) -%}{{ dt.strftime("%Y-%m-%d %H:%M") ~ " UTC" if dt else "–" }}{%- endmacro %}
+
+{# A time as "3 hours ago", with the exact one on hover. #}
+{% macro since(dt, now) -%}
+{%- if dt %}<time datetime="{{ dt.isoformat() }}Z" title="{{ when(dt) }}">{{ dt|ago(now) }}</time>{% else %}<span class="muted">–</span>{% endif -%}
+{%- endmacro %}
+
+{# A scan's result: the grade chip (coloured by score) and the score. #}
+{% macro grade(scan, big=false) -%}
+{%- if scan and scan.verdict -%}
+<span class="result"><span class="grade g-{{ scan.score|bucket }}{{ ' big' if big }}" title="score {{ scan.score }}">{{ scan.verdict }}</span>
+{%- if scan.score is not none %}<span class="score">{{ scan.score }}</span>{% endif %}</span>
+{%- if not scan.complete %} <span class="pill warn" title="A scanner was missing, failed or timed out">incomplete</span>{% endif %}
+{%- else -%}<span class="muted">not graded</span>{%- endif -%}
+{%- endmacro %}
+
 {% macro result(scan, note=none) -%}
   {%- if scan is none -%}<span class="muted">not scanned</span>
-  {%- elif scan.status == "done" -%}
-    <span class="grade">{{ scan.verdict or "–" }}</span>
-    <span class="muted">{{ scan.score if scan.score is not none else "" }}</span>
-    {%- if not scan.complete %} <span class="tag warn" title="A scanner was missing, failed or timed out">incomplete</span>{% endif %}
-  {%- elif scan.status == "failed" -%}<span class="tag bad">failed</span>
-  {%- else -%}<span class="tag">{{ scan.status }}</span>{% if note %} <span class="muted small">{{ note }}</span>{% endif %}
+  {%- elif scan.status == "done" -%}{{ grade(scan) }}
+  {%- elif scan.status == "failed" -%}<span class="pill bad">failed</span>
+  {%- else -%}<span class="pill live-pill">{{ scan.status }}</span>{% if note %} <span class="muted small">{{ note }}</span>{% endif %}
   {%- endif -%}
+{%- endmacro %}
+
+{% macro sev(s) -%}<span class="sev sev-{{ s }}">{{ s }}</span>{%- endmacro %}
+
+{# Open findings by severity, the worst first; a dash when there are none. #}
+{% macro sevcounts(counts) -%}
+{%- set ns = namespace(any=false) -%}
+<span class="counts">
+{%- for s in ("critical", "high", "medium", "low", "info") if counts.get(s) -%}
+  {%- set ns.any = true -%}<span class="count sev-{{ s }}" title="{{ counts[s] }} {{ s }}">{{ counts[s] }}</span>
+{%- endfor -%}
+{%- if not ns.any %}<span class="muted">–</span>{% endif -%}
+</span>
+{%- endmacro %}
+
+{# A sortable column heading. #}
+{% macro th(v, key, label, cls="") -%}
+<th class="{{ cls }}" aria-sort="{{ v.aria(key) }}"><a class="sort{{ ' on' if v.sort == key }}{{ ' desc' if v.sort == key and v.desc }}" href="{{ v.href(key) }}">{{ label }}</a></th>
+{%- endmacro %}
+
+{# The search box over a table, and how many rows it shows. #}
+{% macro search(v, placeholder="Search", noun="row") -%}
+<form method="get" class="search" role="search" action="#{{ v.anchor }}">
+  {% for k, val in v.hidden %}<input type="hidden" name="{{ k }}" value="{{ val }}">{% endfor %}
+  <label class="search-box">{{ icon("search", 16) }}
+    <input type="search" name="{{ v.search_name }}" value="{{ v.q }}" placeholder="{{ placeholder }}" aria-label="{{ placeholder }}"></label>
+  <button class="btn ghost small">Search</button>
+  <span class="muted small count-text">
+    {%- if v.q %}{{ v.rows|length }} of {{ v.total }} · <a href="{{ v.clear }}">clear</a>
+    {%- else %}{{ v.total }} {{ noun }}{{ "s" if v.total != 1 }}{% endif %}</span>
+</form>
+{%- endmacro %}
+
+{# A pop-up: the browser's popover, closed with Esc, a click outside or the ×. #}
+{% macro modal_head(id, title) -%}
+<div class="modal-head"><h2>{{ title }}</h2>
+  <button type="button" class="icon-btn" popovertarget="{{ id }}" popovertargetaction="hide" aria-label="Close">{{ icon("close") }}</button></div>
+{%- endmacro %}
+
+{# The fields for adding a target of one profile; shown in a pop-up, or in the page
+   after a mistake (a popover can't open itself without a script). #}
+{% macro add_target_fields(profile, source="") -%}
+<input type="hidden" name="profile" value="{{ profile }}">
+{% if profile == "owned" %}
+<label class="field">Repository
+  <input name="source" required value="{{ source }}" placeholder="https://github.com/me/project.git" autocomplete="off">
+  <span class="hint">An HTTPS address of a repository you own.</span></label>
+<label class="field"><span>Branch or tag <span class="muted">(optional)</span></span>
+  <input name="ref" placeholder="the default branch" autocomplete="off"></label>
+{% else %}
+<label class="field">Repository
+  <input name="source" required value="{{ source }}" placeholder="owner/repo" autocomplete="off">
+  <span class="hint">An integration or card from GitHub, checked before you install it.</span></label>
+<label class="field"><span>Version <span class="muted">(optional)</span></span>
+  <input name="ref" placeholder="the version the Marketplace installs" autocomplete="off"></label>
+{% endif %}
+<label class="field"><span>Name <span class="muted">(optional)</span></span><input name="name" autocomplete="off"></label>
+<label class="field">Rescan every
+  <span class="inline"><input name="interval_hours" type="number" min="0" value="168" class="short"> hours</span>
+  <span class="hint">0: only when you ask.</span></label>
 {%- endmacro %}
 
 {# A yes/no setting that can also be left to the default (blank). #}
@@ -23,8 +123,8 @@
 {% macro ai_note(note, action, ai_on, ai_limit, label) -%}
 {% if note and note.status == "done" and note.result %}{% set r = note.result %}
 <div class="ai">
-  <div class="small"><span class="tag">Claude</span>
-    {% if r.real %}<span class="tag {{ {'likely': 'bad', 'unclear': 'warn'}.get(r.real, '') }}">{{ {"likely": "looks real", "unlikely": "probably harmless here", "unclear": "can't tell"}[r.real] }}</span>{% endif %}</div>
+  <div class="ai-head"><span class="pill accent">{{ icon("spark", 14) }} Claude</span>
+    {% if r.real %}<span class="pill {{ {'likely': 'bad', 'unclear': 'warn', 'unlikely': 'good'}.get(r.real, '') }}">{{ {"likely": "looks real", "unlikely": "probably harmless here", "unclear": "can't tell"}[r.real] }}</span>{% endif %}</div>
   {% if r.summary %}<p>{{ r.summary }}</p>{% endif %}
   {% if r.reason %}<p>{{ r.reason }}</p>{% endif %}
   {% if r.fix %}<p><strong>What to do:</strong> {{ r.fix }}</p>{% endif %}
@@ -38,14 +138,12 @@
   <p class="muted small">Written by {{ note.model }} {{ when(note.finished_at) }}, asked by {{ note.requested_by or "–" }}, from what the scanners recorded, which includes text from the scanned code. It can be wrong.</p>
 </div>
 {% elif note and note.status in ("queued", "running") %}
-<p class="small ai"><span class="tag">Claude</span>
+<p class="small ai"><span class="pill accent">{{ icon("spark", 14) }} Claude</span>
   {% if note.status == "running" %}Answering…{% elif ai_limit %}Waiting: today's limit of requests is used up (until midnight UTC).{% else %}Asked {{ when(note.requested_at) }}; the answer appears here.{% endif %}</p>
 {% elif note and note.status == "error" %}
 <p class="small error-text">Claude couldn't explain this: {{ note.error }}</p>
 {% endif %}
 {% if ai_on and not (note and note.status in ("queued", "running")) %}
-<form method="post" action="{{ action }}"><button>{{ label if not note else "Ask again" }}</button></form>
+<form method="post" action="{{ action }}"><button class="btn{{ ' ghost' if note }}">{{ icon("spark", 16) }} {{ label if not note else "Ask again" }}</button></form>
 {% endif %}
 {%- endmacro %}
-
-{% macro when(dt) -%}{{ dt.strftime("%Y-%m-%d %H:%M") ~ " UTC" if dt else "–" }}{%- endmacro %}

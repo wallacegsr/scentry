@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}System · Scentry{% endblock %}
+
+{% macro status(st, text) -%}
+<span class="pill {{ {'ok': 'good', 'bad': 'bad'}.get(st, '') }}">{{ text }}</span>
+{%- endmacro %}
+
+{% block main %}
+{% set sync, notifier, ai_state = state.sync, state.notifier, state.ai_state %}
+{% set chip = {} %}{% for name, st, text in state.chips %}{% set _ = chip.update({name: (st, text)}) %}{% endfor %}
+<div class="page-head">
+  <div class="title">{{ icon("system", 26) }}
+    <div><h1>System</h1>
+      <div class="sub">The services around the scanner. Each holds its own secret and never touches scanned code.</div></div>
+  </div>
+</div>
+
+{% if state.waiting[0] %}
+<section class="alert warn">
+  <div>
+    <strong>GitHub's API limit is used up.</strong>
+    {{ state.waiting[0] }} scan{{ "s" if state.waiting[0] != 1 }} wait until {{ state.waiting[1].strftime("%H:%M") }} UTC, then carry on.
+    <div class="small">Without a token GitHub allows 60 requests an hour, which isn't enough for more
+      than a few integrations. If SCENTRY_PUBLIC_GITHUB_TOKEN isn't set yet: create a GitHub token
+      with no permissions at all and set it there, which raises the limit to 5,000.</div>
+  </div>
+</section>
+{% endif %}
+
+<div class="grid two">
+  <section class="card">
+    <div class="card-head"><h2>{{ icon("ha", 16) }} Home Assistant{% if sync and sync.ha_version %} {{ sync.ha_version }}{% endif %}</h2>
+      {{ status(*chip["Home Assistant"]) }}</div>
+    <div class="card-body">
+      {% if not sync %}
+        <p class="muted small">Set SCENTRY_HASS_URL and SCENTRY_HASS_TOKEN on the hass-sync service: it reads what the
+          Marketplace (HACS) installs, and the Marketplace's catalog.</p>
+      {% else %}
+        {% if sync.error %}
+          <p class="error-text small">{{ sync.error }}</p>
+          <p class="muted small">Last successful sync: {{ sync.last_ok_at|ago(now) }}</p>
+        {% else %}
+          {% set ni, nc = sync_counts.get("integration", 0), sync_counts.get("card", 0) %}
+          <p class="small">Synced {{ sync.last_ok_at|ago(now) }} · {{ ni }} integration{{ "s" if ni != 1 }}, {{ nc }} card{{ "s" if nc != 1 }}
+            {%- if sync.skipped %} · not scanned: {% for k, n in sync.skipped|dictsort %}{{ n }} {{ k }}{{ ", " if not loop.last }}{% endfor %}{% endif %}
+            · {{ "watching for installs" if sync.listening else "checking every few minutes" }}</p>
+          {% if sync.catalog_size %}<p class="muted small">Marketplace catalog: {{ sync.catalog_size }} integrations and cards, read {{ sync.catalog_at|ago(now) }}.</p>{% endif %}
+        {% endif %}
+        {% if sync.requested_at and (not sync.last_attempt_at or sync.requested_at > sync.last_attempt_at) %}
+          <p class="muted small">Sync requested…</p>
+        {% endif %}
+      {% endif %}
+    </div>
+    {% if sync %}<div class="card-foot"><form method="post" action="/hass/sync"><button class="ghost small">{{ icon("scan", 14) }} Sync now</button></form></div>{% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>{{ icon("bell", 16) }} Notifications</h2>{{ status(*chip["Notifications"]) }}</div>
+    <div class="card-body">
+      {% if not notifier or not notifier.services %}
+        <p class="muted small">Off · set SCENTRY_NOTIFY_URLS on the notify service.</p>
+      {% else %}
+        {% if state.notifier_gone %}<p><span class="pill bad">notify service not running</span></p>{% endif %}
+        <p class="small">{{ notifier.services }} service{{ "s" if notifier.services != 1 }} · last sent {{ notifier.last_sent_at|ago(now) }}</p>
+        {% if notifier.error %}
+          <p class="error-text small">{{ notifier.error }} ({{ notifier.error_at|ago(now) }})</p>
+        {% endif %}
+        {% if notifier.test_requested_at and (not notifier.test_done_at or notifier.test_requested_at > notifier.test_done_at) %}
+          <p class="muted small">Test requested…</p>
+        {% elif notifier.test_done_at %}
+          <p class="muted small">Test {{ "delivered" if notifier.test_ok else "not delivered" }} {{ notifier.test_done_at|ago(now) }}</p>
+        {% endif %}
+      {% endif %}
+      {% if notifier and notifier.invalid_urls %}
+        <p class="error-text small">{{ notifier.invalid_urls }} notification URL{{ "s" if notifier.invalid_urls != 1 }}
+          couldn't be read and {{ "are" if notifier.invalid_urls != 1 else "is" }} ignored.</p>
+      {% endif %}
+    </div>
+    {% if notifier and notifier.services %}<div class="card-foot"><form method="post" action="/notify/test"><button class="ghost small">Send a test</button></form></div>{% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>{{ icon("spark", 16) }} AI explanations</h2>{{ status(*chip["Claude"]) }}</div>
+    <div class="card-body">
+      {% if not ai_state or not ai_state.configured %}
+        <p class="muted small">Off · set SCENTRY_ANTHROPIC_API_KEY on the ai service.</p>
+      {% else %}
+        {% if state.ai_gone %}<p><span class="pill bad">ai service not running</span></p>{% endif %}
+        {% if state.ai_limit %}<p><span class="pill warn">today's limit used up</span></p>{% endif %}
+        <p class="small">{{ ai_state.model }} · on request, from a finding or a scan
+          {%- if ai_state.daily_limit %} · {{ ai_state.used if ai_state.day == now.date().isoformat() else 0 }} of {{ ai_state.daily_limit }} today{% endif %}</p>
+        {% if ai_state.error %}
+          <p class="error-text small">{{ ai_state.error }} ({{ ai_state.error_at|ago(now) }})</p>
+        {% endif %}
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>{{ icon("download", 16) }} Export</h2></div>
+    <div class="card-body">
+      <p class="small"><a href="/export.json">Everything as JSON</a>: every target, its findings and current result.</p>
+      <p class="small">Findings as CSV: <a href="/export/findings.csv?status=open">open</a> · <a href="/export/findings.csv">all</a></p>
+      <p class="muted small">Each target's page exports its own, as JSON or SARIF.</p>
+    </div>
+  </section>
+</div>
+
+<p class="foot-note">Scentry v{{ version }} · signed in as {{ user }}</p>
+{% endblock %}

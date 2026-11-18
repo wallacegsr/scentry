@@ -1,22 +1,37 @@
-<!doctype html>
+{% from "_macros.html" import icon %}<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>{% block title %}Scentry{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   {#- Plain HTML refresh (the content security policy allows no scripts), only while a
       scan on this page is waiting or running, or Claude is still answering. -#}
   {% if refresh %}<meta http-equiv="refresh" content="{{ refresh_seconds }}">{% endif %}
 </head>
 <body>
-  <header>
-    <a class="brand" href="/">Scentry</a>
-    <span class="muted">{{ user }} · v{{ version }}</span>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="/">{{ icon("shield", 22) }}<span>Scentry</span></a>
+      <span class="who">{{ user }} · v{{ version }}</span>
+    </div>
+    <nav class="tabbar" aria-label="Sections">
+      <div class="wrap tabs">
+        <a href="/" class="tab{{ ' on' if tab == 'overview' }}" {% if tab == 'overview' %}aria-current="page"{% endif %}>{{ icon("overview") }}<span>Overview</span></a>
+        {% for key, label in tabs.items() %}
+        <a href="/{{ key }}" class="tab{{ ' on' if tab == key }}" {% if tab == key %}aria-current="page"{% endif %}>{{ icon(key) }}<span>{{ label }}</span><span class="badge">{{ tab_counts[key] }}</span></a>
+        {% endfor %}
+        <a href="/marketplace" class="tab{{ ' on' if tab == 'marketplace' }}" {% if tab == 'marketplace' %}aria-current="page"{% endif %}>{{ icon("marketplace") }}<span>Marketplace</span></a>
+        <a href="/system" class="tab{{ ' on' if tab == 'system' }}" {% if tab == 'system' %}aria-current="page"{% endif %}>{{ icon("system") }}<span>System</span>
+          {%- if system_alert %}<span class="alert-dot" title="A service needs a look"></span>{% endif %}</a>
+      </div>
+    </nav>
   </header>
-  <main>
+  <main class="wrap">
     {% if refresh %}
-    <p class="live small">{{ refresh_what or "A scan is in progress" }}: this page refreshes every {{ refresh_seconds }} seconds
+    <p class="live small"><span class="pulse"></span>{{ refresh_what or "A scan is in progress" }}: this page refreshes every {{ refresh_seconds }} seconds
       until it finishes. <a href="{{ here }}&amp;refresh=0">Pause</a> (to write a suppression, say).</p>
     {% elif paused %}
     <p class="live small">Auto-refresh paused. <a href="{{ here }}">Resume</a></p>

@@ -1,57 +1,75 @@
 {% extends "base.html" %}
-{% from "_macros.html" import result %}
+{% from "_macros.html" import icon, result, th %}
 {% block title %}Marketplace · Scentry{% endblock %}
 {% block main %}
-<p><a href="/">← Scentry</a></p>
-<h1>Search the Marketplace</h1>
+<div class="page-head">
+  <div class="title">{{ icon("marketplace", 26) }}
+    <div><h1>Search the Marketplace</h1>
+      <div class="sub">Check any integration or card the Marketplace (HACS) offers before you install it.</div></div>
+  </div>
+</div>
 
 {% if not sync or not sync.catalog_size %}
-<p class="muted">The catalog comes from Home Assistant: once the sync is connected
+<section class="card"><div class="empty-state">{{ icon("marketplace", 32) }}
+  <p>The catalog comes from Home Assistant: once the sync is connected
   (SCENTRY_HASS_URL and SCENTRY_HASS_TOKEN), every integration and card the Marketplace
-  offers can be searched here. Until then, add one by owner/repo on the front page.</p>
+  offers can be searched here. Until then, add one by owner/repo under <a href="/others">Other integrations</a>.</p>
+</div></section>
 {% else %}
-<form method="get" action="/marketplace" class="row">
-  <input name="q" value="{{ q }}" placeholder="name, owner/repo or words from the description" autofocus>
-  <select name="kind">
-    <option value="" {% if not kind %}selected{% endif %}>Integrations and cards</option>
-    <option value="integration" {% if kind == "integration" %}selected{% endif %}>Integrations</option>
-    <option value="card" {% if kind == "card" %}selected{% endif %}>Cards</option>
-  </select>
-  <button>Search</button>
-</form>
-<p class="muted small">{{ sync.catalog_size }} in the catalog, read {{ sync.catalog_at|ago(now) }}.
-  {% if total > shown %}Showing the {{ shown }} with the most stars of {{ total }} matches.{% else %}{{ total }} match{{ "es" if total != 1 }}.{% endif %}
-  Names and descriptions are the publishers' own.</p>
-
-<table>
-  <thead><tr><th>Name</th><th>Version</th><th>Stars</th><th>Scentry</th></tr></thead>
-  <tbody>
-  {% for i in items %}
-    {% set key = i.repo.lower() %}
-    {% set t = targets.get(key) %}
-    <tr>
-      <td><strong>{{ i.name }}</strong>
-        <div class="muted small">{{ i.repo }} · {{ i.kind }}{% if i.installed %} · <span class="tag">installed</span>{% endif %}</div>
-        {% if i.description %}<div class="small">{{ i.description }}</div>{% endif %}</td>
-      <td class="small">{{ i.version or "–" }}</td>
-      <td class="small">{{ i.stars }}</td>
-      <td>
-        {% if t %}<a href="/targets/{{ t.id }}">{{ result(graded.get(key)) if graded.get(key) else ("scanning" if key in busy else "not scanned") }}</a>{% endif %}
-        {% if key in busy %}<div class="muted small">scan waiting or running</div>
-        {% else %}
-        <form method="post" action="/marketplace/scan">
-          <input type="hidden" name="repo" value="{{ i.repo }}">
-          <button>{{ "Scan again" if t else "Scan" }}{% if i.version %} {{ i.version }}{% endif %}</button>
-        </form>
-        {% endif %}
-      </td>
-    </tr>
-  {% else %}
-    <tr><td colspan="4" class="muted">Nothing matches.</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-<p class="muted small">A scan from here checks the version the Marketplace would install now, and
-  isn't repeated unless you ask. If you install it, the Home Assistant sync takes it over.</p>
+<section class="card" id="catalog">
+  <div class="card-head">
+    <form method="get" action="/marketplace#catalog" class="search wide" role="search">
+      <label class="search-box">{{ icon("search", 16) }}
+        <input type="search" name="q" value="{{ q }}" placeholder="name, owner/repo or words from the description" aria-label="Search the Marketplace" autofocus></label>
+      <select name="kind" aria-label="Kind">
+        <option value="" {% if not kind %}selected{% endif %}>Integrations and cards</option>
+        <option value="integration" {% if kind == "integration" %}selected{% endif %}>Integrations</option>
+        <option value="card" {% if kind == "card" %}selected{% endif %}>Cards</option>
+      </select>
+      {% for k, val in table.hidden if k in ("sort", "dir") %}<input type="hidden" name="{{ k }}" value="{{ val }}">{% endfor %}
+      <button>Search</button>
+    </form>
+  </div>
+  <div class="card-body"><p class="muted small">{{ sync.catalog_size }} in the catalog, read {{ sync.catalog_at|ago(now) }}.
+    {% if total > shown %}Showing the {{ shown }} with the most stars of {{ total }} matches.{% else %}{{ total }} match{{ "es" if total != 1 }}.{% endif %}
+    Names and descriptions are the publishers' own.</p></div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      {{ th(table, "name", "Name") }}
+      {{ th(table, "version", "Version", "opt") }}
+      {{ th(table, "stars", "Stars", "num opt") }}
+      {{ th(table, "result", "Scentry") }}
+    </tr></thead>
+    <tbody>
+    {% for i in table.rows %}
+      {% set key = i.repo.lower() %}
+      {% set t = targets.get(key) %}
+      <tr>
+        <td><span class="name">{{ i.name }}</span>
+          <div class="sub">{{ i.repo }} · {{ i.kind }}{% if i.installed %} · <span class="pill accent">installed</span>{% endif %}</div>
+          {% if i.description %}<div class="small">{{ i.description }}</div>{% endif %}</td>
+        <td class="opt small mono">{{ i.version or "–" }}</td>
+        <td class="num opt small">{{ i.stars }}</td>
+        <td>
+          {% if t %}<div><a href="/targets/{{ t.id }}">{{ result(graded.get(key)) if graded.get(key) else ("scanning" if key in busy else "not scanned") }}</a></div>{% endif %}
+          {% if key in busy %}<div class="muted small">scan waiting or running</div>
+          {% else %}
+          <form method="post" action="/marketplace/scan">
+            <input type="hidden" name="repo" value="{{ i.repo }}">
+            <button class="small{{ ' ghost' if t }}">{{ "Scan again" if t else "Scan" }}{% if i.version %} {{ i.version }}{% endif %}</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="empty">Nothing matches.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="card-foot small muted">A scan from here checks the version the Marketplace would install now, and
+    isn't repeated unless you ask. If you install it, the Home Assistant sync takes it over.</div>
+</section>
 {% endif %}
 {% endblock %}

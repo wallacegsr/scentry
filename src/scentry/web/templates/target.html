@@ -1,169 +1,215 @@
 {% extends "base.html" %}
-{% from "_macros.html" import ai_note, choice, result, when %}
+{% from "_macros.html" import icon, choice, grade, result, sev, since, when, th, search, modal_head %}
 {% block title %}{{ target.name }} · Scentry{% endblock %}
 {% block main %}
-<h1>{{ target.name }}</h1>
-<p class="muted">{{ "My code" if target.profile == "owned" else "HA integration" }} ·
-  {{ target.source }}{% if target.ref %} @ {{ target.ref }}{% endif %}</p>
-{% if target.origin == "hacs" %}
-<p class="small">
-  {% if target.hacs_removed_at %}Uninstalled from Home Assistant; no longer rescanned on a schedule.
-  {% else %}Installed in Home Assistant: {{ target.installed_version }}
-    {%- if target.update_offered %} · update offered: {{ target.available_version }}{% endif %}.
-    Rescanned every {{ target.interval_hours }} hours.{% endif %}
-</p>
-{% endif %}
-{% if target.profile == "owned" and target.source.startswith("https://") %}
-<div class="row small">
-  <div>{% if target.watch_commits %}
-    Each new commit on {{ target.ref or "the default branch" }} is scanned: checked
-    {{ target.head_checked_at|ago if target.head_checked_at else "not yet" }}
-    {%- if target.head_sha %}, at {{ target.head_sha[:10] }}{% endif %}.
-    {% if target.head_error %}<div class="error-text">{{ target.head_error }}</div>{% endif %}
-  {% else %}New commits aren't scanned; only {% if target.interval_hours %}every {{ target.interval_hours }} hours and {% endif %}when you ask.{% endif %}</div>
+<nav class="crumbs"><a href="/{{ tab }}">{{ tabs[tab] }}</a><span class="sep">›</span><span>{{ target.name }}</span></nav>
+
+<div class="page-head">
+  <div>
+    <h1>{{ target.name }}</h1>
+    <div class="meta">
+      <span class="mono">{{ target.source }}{% if target.ref %} @ {{ target.ref }}{% endif %}</span>
+      <span>{{ "My code" if target.profile == "owned" else ("Home Assistant " ~ (target.hacs_kind or "integration")) }}</span>
+      {% if target.origin == "hacs" %}<span>{% if target.hacs_removed_at %}uninstalled; no longer rescanned on a schedule{% else %}installed {{ target.installed_version }}{% endif %}</span>{% endif %}
+      {% if target.interval_hours and not target.hacs_removed_at %}<span>rescanned every {{ target.interval_hours }} hours</span>{% endif %}
+    </div>
+  </div>
+  <div class="grade-block">
+    {% if graded %}<span class="grade big g-{{ graded.score|bucket }}">{{ graded.verdict }}</span>
+      <span class="score">score {{ graded.score }}{% if not graded.complete %} · incomplete{% endif %}</span>
+    {% else %}<span class="grade big g-none">–</span><span class="score">not graded yet</span>{% endif %}
+  </div>
+</div>
+
+{% set own = target.notify_score_below is not none or target.notify_min_severity
+             or target.notify_clean_updates is not none or target.notify_failures is not none %}
+<div class="actions spaced">
+  <form method="post" action="/targets/{{ target.id }}/scan"><button>{{ icon("scan", 16) }} Scan now</button></form>
+  <button type="button" class="ghost" popovertarget="notify">{{ icon("bell", 16) }} Notifications{% if target.notify_muted %}: muted{% elif own %}: its own settings{% endif %}</button>
+  {% if target.profile == "owned" and target.source.startswith("https://") %}
   <form method="post" action="/targets/{{ target.id }}/watch">
     <input type="hidden" name="on" value="{{ 'off' if target.watch_commits else 'on' }}">
-    <button>{{ "Stop scanning new commits" if target.watch_commits else "Scan new commits" }}</button>
+    <button class="ghost">{{ icon("eye", 16) }} {{ "Stop scanning new commits" if target.watch_commits else "Scan new commits" }}</button>
   </form>
+  {% endif %}
+  <button type="button" class="danger ghost" popovertarget="remove">{{ icon("trash", 16) }} Remove</button>
 </div>
+
+<div class="tiles">
+  <div class="tile"><div class="k">Open</div><div class="v">{{ counts.get("open", 0) }}</div></div>
+  <div class="tile"><div class="k">Suppressed</div><div class="v">{{ counts.get("suppressed", 0) }}</div></div>
+  <div class="tile"><div class="k">Fixed</div><div class="v">{{ counts.get("fixed", 0) }}</div></div>
+  <div class="tile"><div class="k">Last scan</div><div class="v small">{% set last = target.scans[0] if target.scans else none %}
+    {%- if last %}{{ result(last, progress.get(last.id)) }}{% if last.finished_at %}<div class="muted small">{{ since(last.finished_at, now) }}</div>{% endif %}{% else %}<span class="muted">never</span>{% endif %}</div></div>
+  {% if target.origin == "hacs" and target.update_offered %}
+  <div class="tile"><div class="k">Update offered</div><div class="v small mono">{{ target.available_version }}</div></div>
+  {% endif %}
+</div>
+
+{% if target.profile == "owned" and target.source.startswith("https://") %}
+<p class="foot-note">{% if target.watch_commits %}
+  Each new commit on {{ target.ref or "the default branch" }} is scanned: checked
+  {{ target.head_checked_at|ago if target.head_checked_at else "not yet" }}
+  {%- if target.head_sha %}, at <span class="mono">{{ target.head_sha[:10] }}</span>{% endif %}.
+  {% if target.head_error %}<span class="error-text">{{ target.head_error }}</span>{% endif %}
+{% else %}New commits aren't scanned; only {% if target.interval_hours %}every {{ target.interval_hours }} hours and {% endif %}when you ask.{% endif %}</p>
 {% endif %}
 
-<div class="row">
-  <form method="post" action="/targets/{{ target.id }}/scan"><button>Scan now</button></form>
-  {% set own = target.notify_score_below is not none or target.notify_min_severity
-               or target.notify_clean_updates is not none or target.notify_failures is not none %}
-  <details>
-    <summary>Notifications{% if target.notify_muted %}: muted{% elif own %}: its own settings{% endif %}</summary>
+{% if why is not none and latest %}
+<section class="card" id="grade">
+  <div class="card-head">
+    <h2>Grade {{ latest.verdict }} <span class="muted">{{ latest.score }}</span></h2>
+    {% if why %}{{ search(why_table, "Search problems", "problem") }}{% endif %}
+  </div>
+  {% if why %}
+  <div class="card-body"><p class="muted small">Each problem counts once, however many places it is found in; two scanners
+    reporting the same places count once. 100 − {{ deducted }} = {{ [100 - deducted, 0]|max }}
+    {%- if latest.score < [100 - deducted, 0]|max %}, capped at {{ latest.score }}
+    ({% if why|selectattr("severity", "equalto", "critical")|list %}an open critical: D at best{% elif why|selectattr("severity", "equalto", "high")|list %}an open high: B at best{% else %}a scanner didn't finish{% endif %}){% endif %}.</p></div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      {{ th(why_table, "severity", "Severity") }}
+      {{ th(why_table, "title", "Problem") }}
+      {{ th(why_table, "places", "Places", "num") }}
+      {{ th(why_table, "points", "Points", "num") }}
+    </tr></thead>
+    <tbody>
+    {% for i in why_table.rows %}
+      <tr>
+        <td>{{ sev(i.severity) }}</td>
+        <td>{{ i.title }}<div class="sub">{{ i.scanner }}: {{ i.rule_id }}
+          {%- for a in i.also %} · also {{ a }}{% endfor %}</div></td>
+        <td class="num">{{ i.count }}</td>
+        <td class="num">−{{ i.deduction }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="empty">Nothing matches.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="card-body"><p class="muted small">No open findings{% if not latest.complete %}; capped at 89 because a scanner didn't finish{% endif %}.</p></div>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="card" id="findings">
+  <div class="card-head">
+    <div class="headline"><h2>Findings</h2>
+      <nav class="segmented" aria-label="Which findings">
+        {% for s in ("open", "suppressed", "fixed") %}
+        <a href="?status={{ s }}#findings" {% if s == status %}class="on" aria-current="true"{% endif %}>{{ s|capitalize }} {{ counts.get(s, 0) }}</a>
+        {% endfor %}
+      </nav></div>
+    {{ search(table, "Search findings", "finding") }}
+  </div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      {{ th(table, "severity", "Severity") }}
+      {{ th(table, "title", "Problem") }}
+      {{ th(table, "where", "Where", "opt") }}
+      {{ th(table, "scanner", "Scanner", "opt") }}
+      {{ th(table, "seen", "First seen", "opt") }}
+    </tr></thead>
+    <tbody>
+    {% for f in table.rows %}
+      <tr class="link">
+        <td>{{ sev(f.severity) }}</td>
+        <td><a class="row-link name" href="/findings/{{ f.id }}">{{ f.title }}</a>
+          <div class="sub">{{ f.rule_id }}
+            {%- if f.same_as is not none %} · <span class="pill">same vulnerability</span>{% endif %}
+            {%- if notes.get(f.id) and notes[f.id].status == "done" %} · <span class="pill accent">{{ icon("spark", 12) }} explained</span>{% endif %}
+            {%- if f.status == "suppressed" %} · {{ (f.suppression_reason or "")|replace("_", " ") }}: {{ f.suppression_note }}{% endif %}</div></td>
+        <td class="opt small mono">{% if f.file %}{{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}{% else %}<span class="muted">–</span>{% endif %}</td>
+        <td class="opt small">{{ f.scanner }}</td>
+        <td class="opt small">{{ since(f.first_seen_at, now) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="empty">{% if table.q %}Nothing matches.{% else %}No {{ status }} findings.{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="card" id="scans">
+  <div class="card-head"><h2>Scans</h2>{{ search(scans, "Search scans", "scan") }}</div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      {{ th(scans, "id", "#") }}
+      {{ th(scans, "score", "Result") }}
+      {{ th(scans, "version", "Version") }}
+      {{ th(scans, "finished", "Finished", "opt") }}
+    </tr></thead>
+    <tbody>
+    {% for s in scans.rows %}
+      <tr class="link">
+        <td><a class="row-link" href="/scans/{{ s.id }}">{{ s.id }}</a></td>
+        <td>{{ result(s, progress.get(s.id)) }}</td>
+        <td class="small"><span class="mono">{{ s.ref or "" }} {{ (s.commit_sha or "")[:10] }}</span>
+          {%- if s.kind == "recheck" %} <span class="pill">advisories re-checked</span>{% endif %}</td>
+        <td class="opt small">{{ when(s.finished_at) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="empty">{% if scans.q %}Nothing matches.{% else %}No scans yet.{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="card-foot small muted">{{ icon("download", 14) }} Export: <a href="/targets/{{ target.id }}/export.json">JSON</a>
+    (findings, scans{{ ", Barkley's reports" if target.profile == "ha" }}) ·
+    <a href="/targets/{{ target.id }}/export.sarif">SARIF</a> (for GitHub code scanning, DefectDojo and the like)</div>
+</section>
+
+<div id="notify" popover class="modal" role="dialog" aria-label="Notifications">
+  {{ modal_head("notify", "Notifications") }}
+  <div class="modal-body">
     <form method="post" action="/targets/{{ target.id }}/notify" class="stack">
       {% if not notifier or not notifier.services %}
-      <p class="muted small">Notifications are off: the notify service has no SCENTRY_NOTIFY_URLS.
+      <p class="alert warn small">Notifications are off: the notify service has no SCENTRY_NOTIFY_URLS.
         These settings apply once it has.</p>
       {% endif %}
       <label class="check"><input type="checkbox" name="muted" value="on" {% if target.notify_muted %}checked{% endif %}>
         Mute: no messages about this target at all</label>
       {% if target.profile == "ha" %}
-      <label>When a version scores under
-        <span><input name="score_below" type="number" min="1" max="100" class="short"
+      <label class="field">When a version scores under
+        <span class="inline"><input name="score_below" type="number" min="1" max="100" class="short"
           value="{{ target.notify_score_below if target.notify_score_below is not none else '' }}"
           placeholder="{{ defaults.get('score_below', '') }}">
         <span class="muted small">blank: the default{% if defaults %} ({{ defaults.score_below }}){% endif %}</span></span></label>
       {% if target.origin == "hacs" %}
-      <label>Every offered update, the fine ones too
+      <label class="field">Every offered update, the fine ones too
         {{ choice("clean_updates", target.notify_clean_updates, defaults.get("clean_updates")) }}</label>
       {% endif %}
       {% else %}
-      <label>New findings this bad or worse
+      <label class="field">New findings this bad or worse
         <select name="min_severity">
           <option value="">default{% if defaults %} ({{ defaults.min_severity }}){% endif %}</option>
           {% for s in severities %}<option value="{{ s }}" {% if target.notify_min_severity == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
         </select></label>
       {% endif %}
-      <label>When its scans start failing
+      <label class="field">When its scans start failing
         {{ choice("failures", target.notify_failures, defaults.get("failures")) }}</label>
-      <button>Save</button>
+      <div class="form-actions">
+        <button type="button" class="ghost" popovertarget="notify" popovertargetaction="hide">Cancel</button>
+        <button>Save</button></div>
     </form>
-  </details>
-  <details>
-    <summary>Remove</summary>
-    <form method="post" action="/targets/{{ target.id }}/delete">
-      <p>This deletes the target with its scans, findings and suppressions.</p>
-      <button class="danger">Remove {{ target.name }}</button>
-    </form>
-  </details>
+  </div>
 </div>
 
-{% if why is not none and latest %}
-<h2>Grade {{ latest.verdict }} <span class="muted">{{ latest.score }}</span></h2>
-{% if why %}
-<p class="muted small">Each problem counts once, however many places it is found in; two scanners
-  reporting the same places count once. 100 − {{ deducted }} = {{ [100 - deducted, 0]|max }}
-  {%- if latest.score < [100 - deducted, 0]|max %}, capped at {{ latest.score }}
-  ({% if why|selectattr("severity", "equalto", "critical")|list %}an open critical: D at best{% elif why|selectattr("severity", "equalto", "high")|list %}an open high: B at best{% else %}a scanner didn't finish{% endif %}){% endif %}.</p>
-<table>
-  <thead><tr><th>Severity</th><th>Problem</th><th>Places</th><th>Points</th></tr></thead>
-  <tbody>
-  {% for i in why %}
-    <tr>
-      <td><span class="sev {{ i.severity }}">{{ i.severity }}</span></td>
-      <td>{{ i.title }}<div class="muted small">{{ i.scanner }}: {{ i.rule_id }}
-        {%- for a in i.also %} · also {{ a }}{% endfor %}</div></td>
-      <td>{{ i.count }}</td>
-      <td>−{{ i.deduction }}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p class="muted small">No open findings{% if not latest.complete %}; capped at 89 because a scanner didn't finish{% endif %}.</p>
-{% endif %}
-{% endif %}
-
-<h2>Findings</h2>
-<nav class="tabs">
-  {% for s in ("open", "suppressed", "fixed") %}
-    <a href="?status={{ s }}" {% if s == status %}class="on"{% endif %}>{{ s|capitalize }} ({{ counts.get(s, 0) }})</a>
-  {% endfor %}
-</nav>
-{% for f in findings %}
-<article class="finding" id="f{{ f.id }}">
-  <div><span class="sev {{ f.severity }}">{{ f.severity }}</span> <strong>{{ f.title }}</strong></div>
-  <div class="muted small">{{ f.scanner }} · {{ f.rule_id }}{% if f.file %} · {{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}{% endif %}</div>
-  {% if f.same_as is not none %}{% set twin = twin_of.get(f.same_as) %}
-  <p class="small"><span class="tag">same vulnerability</span> Already reported{% if twin %} by {{ twin.scanner }} as
-    <strong>{{ twin.rule_id }}</strong>{% if twin.status != "open" %} ({{ twin.status }}){% endif %}{% endif %}:
-    counted and announced once, there.</p>
-  {% endif %}
-  {% if f.vulns and f.vulns.groups %}
-  <div class="muted small">{% if f.vulns.package %}{{ f.vulns.package }}: {% endif %}
-    {%- for g in f.vulns.groups %}{{ g|join(" = ") }}{{ "; " if not loop.last }}{% endfor %}</div>
-  {% endif %}
-  {% if f.message %}<p>{{ f.message }}</p>{% endif %}
-  {% if f.evidence %}<pre>{{ f.evidence }}</pre>{% endif %}
-  {{ ai_note(notes.get(f.id), "/findings/" ~ f.id ~ "/explain", ai_on, ai_limit, "Explain with Claude") }}
-  {% if f.status == "open" %}
-  <details>
-    <summary>Suppress</summary>
-    <form method="post" action="/findings/{{ f.id }}/suppress" class="stack">
-      <label>Reason
-        <select name="reason">{% for r in reasons %}<option value="{{ r }}">{{ r.replace("_", " ")|capitalize }}</option>{% endfor %}</select>
-      </label>
-      <label>Why <input name="note" required></label>
-      <label>Bring it back for review in <input name="days" type="number" min="0" value="{{ default_days }}" class="short"> days
-        <span class="muted">(0 = never)</span></label>
-      <button>Suppress</button>
+<div id="remove" popover class="modal" role="dialog" aria-label="Remove">
+  {{ modal_head("remove", "Remove " ~ target.name ~ "?") }}
+  <div class="modal-body">
+    <form method="post" action="/targets/{{ target.id }}/delete" class="stack">
+      <p>This deletes the target with its scans, findings and suppressions. It can't be undone.</p>
+      <div class="form-actions">
+        <button type="button" class="ghost" popovertarget="remove" popovertargetaction="hide">Cancel</button>
+        <button class="danger">Remove {{ target.name }}</button></div>
     </form>
-  </details>
-  {% else %}
-  {% if f.status == "suppressed" %}
-  <p class="muted small">{{ (f.suppression_reason or "")|replace("_", " ")|capitalize }} by {{ f.suppressed_by }}:
-    {{ f.suppression_note }} · {{ "until " ~ when(f.suppressed_until) if f.suppressed_until else "permanent" }}</p>
-  {% endif %}
-  <form method="post" action="/findings/{{ f.id }}/reopen"><button>Reopen</button></form>
-  {% endif %}
-</article>
-{% else %}
-<p class="muted">No {{ status }} findings.</p>
-{% endfor %}
-
-<h2>Scans</h2>
-<table>
-  <thead><tr><th>#</th><th>Result</th><th>Version</th><th>Finished</th></tr></thead>
-  <tbody>
-  {% for s in scans %}
-    <tr>
-      <td><a href="/scans/{{ s.id }}">{{ s.id }}</a></td>
-      <td>{{ result(s, progress.get(s.id)) }}</td>
-      <td class="small">{{ s.ref or "" }} {{ (s.commit_sha or "")[:10] }}
-        {%- if s.kind == "recheck" %} <span class="tag">advisories re-checked</span>{% endif %}</td>
-      <td>{{ when(s.finished_at) }}</td>
-    </tr>
-  {% else %}
-    <tr><td colspan="4" class="muted">No scans yet.</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-
-<p class="muted small">Export: <a href="/targets/{{ target.id }}/export.json">JSON</a>
-  (findings, scans{{ ", Barkley's reports" if target.profile == "ha" }}) ·
-  <a href="/targets/{{ target.id }}/export.sarif">SARIF</a> (for GitHub code scanning, DefectDojo and the like)</p>
+  </div>
+</div>
 {% endblock %}
