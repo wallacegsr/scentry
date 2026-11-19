@@ -1,6 +1,6 @@
 version = 1
 revision = 5
-requires-python = "==3.13.*"
+requires-python = "==3.14.*"
 resolution-markers = [
     "sys_platform == 'linux'",
 ]
@@ -27,8 +27,8 @@ wheels = [
 
 [[package]]
 name = "ha-sniff-test"
-version = "0.13.0"
-source = { git = "https://github.com/SeriesOfTubez/ha-barkley?rev=e7a8c8bd6ccfc53e34b3cfb205fe2f9cec260940#e7a8c8bd6ccfc53e34b3cfb205fe2f9cec260940" }
+version = "0.14.0"
+source = { git = "https://github.com/SeriesOfTubez/ha-barkley?rev=cb17f5fdaa674b294520bfaa4c3c100869cb9a4c#cb17f5fdaa674b294520bfaa4c3c100869cb9a4c" }
 dependencies = [
     { name = "jsbeautifier" },
     { name = "rich" },
@@ -143,7 +143,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ha-sniff-test", git = "https://github.com/SeriesOfTubez/ha-barkley?rev=e7a8c8bd6ccfc53e34b3cfb205fe2f9cec260940" },
+    { name = "ha-sniff-test", git = "https://github.com/SeriesOfTubez/ha-barkley?rev=cb17f5fdaa674b294520bfaa4c3c100869cb9a4c" },
     { name = "hatchling", specifier = ">=1.25" },
 ]
 

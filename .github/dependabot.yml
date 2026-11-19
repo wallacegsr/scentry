@@ -29,8 +29,8 @@ updates:
     groups:
       actions: { patterns: ["*"] }
 
-  # Digest updates only for Python: a new minor version is a decision (Barkley needs
-  # 3.13), not a weekly bump.
+  # Digest updates only for Python: a new minor version is a decision (the app and the
+  # scanners are on 3.13, Barkley on the 3.14 it needs), not a weekly bump.
   - package-ecosystem: docker
     directories: [/docker, /docker/egress]
     schedule: { interval: weekly }

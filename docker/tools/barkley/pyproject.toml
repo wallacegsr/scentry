@@ -1,11 +1,12 @@
 # Barkley (published as ha-sniff-test), for docker/Dockerfile. It isn't on PyPI: built
-# from its repository at an exact commit (v0.13.0), with the build backend from uv.lock.
+# from its repository at an exact commit (v0.14.0), with the build backend from uv.lock.
+# Python 3.14, which Barkley needs: the image has it beside the 3.13 everything else uses.
 [project]
 name = "scentry-tool-barkley"
 version = "0"
-requires-python = "==3.13.*"
+requires-python = "==3.14.*"
 dependencies = [
-    "ha-sniff-test @ git+https://github.com/SeriesOfTubez/ha-barkley@e7a8c8bd6ccfc53e34b3cfb205fe2f9cec260940",
+    "ha-sniff-test @ git+https://github.com/SeriesOfTubez/ha-barkley@cb17f5fdaa674b294520bfaa4c3c100869cb9a4c",
     "hatchling>=1.25",  # its build backend: locked here, not fetched at build time
 ]
 

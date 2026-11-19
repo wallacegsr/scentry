@@ -4,11 +4,24 @@
 #   --target runner  the app plus every scanner; this is the one that reads hostile code
 #
 # Debian, not Alpine: Semgrep and GuardDog ship manylinux wheels only, and nothing here
-# is compiled. Python 3.13 because Barkley needs it. Base images are pinned by digest
-# (Dependabot moves them); every Python stage uses the same one.
+# is compiled. Python 3.13 for the app and the scanners, except Barkley, which needs 3.14
+# and gets it beside them. Base images are pinned by digest (Dependabot moves them); every
+# 3.13 stage uses the same one.
+
+# --- Python 3.14, for Barkley alone ------------------------------------------------------
+# The interpreter, its standard library (without pip) and libpython, which it finds next
+# to itself (../lib): copied into /usr/local beside 3.13, which shares no file with it.
+FROM python:3.14-slim-trixie@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS python314
+RUN rm -rf /usr/local/lib/python3.14/site-packages/pip \
+      /usr/local/lib/python3.14/site-packages/pip-*.dist-info \
+      /usr/local/lib/python3.14/ensurepip/_bundled \
+    && mkdir -p /out/bin /out/lib \
+    && cp -a /usr/local/bin/python3.14 /out/bin/ \
+    && cp -a /usr/local/lib/python3.14 /usr/local/lib/libpython3.14.so.1.0 /out/lib/
 
 # --- uv, checked against its sha256 -----------------------------------------------------
-# Also what docker/tools/lock.sh runs in (hence git: Barkley comes from its repository).
+# Also what docker/tools/lock.sh runs in (hence git: Barkley comes from its repository,
+# and Python 3.14 to lock it with).
 FROM python:3.13-slim-trixie@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90 AS uv
 ARG TARGETARCH
 ARG UV_VERSION=0.13.7
@@ -16,6 +29,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl git \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=python314 /out/ /usr/local/
 RUN set -eu; \
     case "${TARGETARCH}" in \
       amd64) arch=x86_64; sha=287491da03f2a785c70fa75b13e1f849918c2f2b5415fe84876b8214eeb792f9 ;; \
@@ -94,6 +108,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl git \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=uv /usr/local/bin/uv /usr/local/bin/uv
+COPY --from=python314 /out/ /usr/local/
 
 RUN set -eu; \
     case "${TARGETARCH}" in \
@@ -114,9 +129,9 @@ RUN set -eu; \
     rm -f /tmp/*.tgz
 
 # Each into its own environment under /opt/tools, every file checked against the hash in
-# its lock; wheels only, except Barkley itself (see docker/tools/install.py).
-ENV UV_PYTHON=/usr/local/bin/python3 \
-    UV_PYTHON_DOWNLOADS=never \
+# its lock, with the Python its requires-python pins; wheels only, except Barkley itself
+# (see docker/tools/install.py).
+ENV UV_PYTHON_DOWNLOADS=never \
     UV_NO_CACHE=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
@@ -133,6 +148,7 @@ RUN apt-get update && apt-get upgrade -y \
       /usr/local/lib/python3.13/ensurepip/_bundled \
     && install -d -o 10001 -g 10001 /cache /work
 COPY --from=tools /usr/local/bin/uv /usr/local/bin/osv-scanner /usr/local/bin/trivy /usr/local/bin/
+COPY --from=python314 /out/ /usr/local/
 COPY --from=gitleaks /out/gitleaks /usr/local/bin/
 COPY --from=tools /opt/tools /opt/tools
 COPY --from=app /opt/scentry /opt/scentry

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Locks the scanners' Python dependencies: docker/tools/<name>/uv.lock, from the version
-# pinned in docker/tools/<name>/pyproject.toml. Runs uv on Linux with Python 3.13, as the
-# runner image does. After changing a version:
+# pinned in docker/tools/<name>/pyproject.toml. Runs uv on Linux, as the runner image
+# does, with the Python each one's requires-python pins (3.13; 3.14 for Barkley). After
+# changing a version:
 #   docker/tools/lock.sh            every scanner
 #   docker/tools/lock.sh semgrep    one
 #   docker/tools/lock.sh --check    fail if a lock is out of date (CI runs this)
@@ -16,6 +17,11 @@ tools="${*:-$(cd docker/tools && ls -d */ | tr -d /)}"
 docker build -q --target uv -t scentry-uv -f docker/Dockerfile . >/dev/null
 here=$(pwd -W 2>/dev/null || pwd)
 docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e UV_NO_CACHE=1 \
-    -e UV_PYTHON=/usr/local/bin/python3 -e UV_PYTHON_DOWNLOADS=never \
+    -e UV_PYTHON_DOWNLOADS=never \
     -v "$here/docker/tools:/tools" -w /tools scentry-uv \
-    sh -euc 'for t in "$@"; do echo "== $t"; uv lock $0 --project "$t"; done' "$check" $tools
+    sh -euc '
+      for t in "$@"; do
+        py=$(sed -n "s/^requires-python = \"==\(3\.[0-9]*\)\.\*\"\$/\1/p" "$t/pyproject.toml")
+        echo "== $t (Python $py)"
+        uv lock $0 --project "$t" --python "/usr/local/bin/python$py"
+      done' "$check" $tools

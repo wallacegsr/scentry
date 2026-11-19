@@ -465,6 +465,9 @@ What goes into the images is pinned:
   `uv.lock` that pins everything it needs, every file checked against its recorded
   hash, and each in its own environment. They install from wheels only, except Barkley,
   which isn't on PyPI: it is built from an exact commit, with a locked build backend.
+  They run on Python 3.13, as Scentry does, except Barkley, which needs 3.14: the
+  runner image has the official 3.14 interpreter beside 3.13 for it, and each tool's
+  `requires-python` says which one it gets.
 - The base images, by digest. The GitHub Actions that build them, by commit.
 
 Dependabot proposes updates to all of these weekly, once a release is a week old

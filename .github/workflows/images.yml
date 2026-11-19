@@ -44,15 +44,23 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.13"
+          # 3.14 for Barkley's lock (docker/tools/barkley); 3.13, the default, for the rest
+          python-version: |
+            3.14
+            3.13
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.13.7"
           enable-cache: false
       # From uv.lock, hashes checked; --locked fails if the lock is out of date.
       - run: uv sync --locked --extra dev --python python3.13
-      # The scanners' locks (docker/tools) still match their pins.
-      - run: for t in docker/tools/*/; do uv lock --check --project "$t" --python python3.13; done
+      # The scanners' locks (docker/tools) still match their pins, each checked with the
+      # Python its requires-python pins.
+      - run: |
+          for t in docker/tools/*/; do
+            py=$(sed -n 's/^requires-python = "==\(3\.[0-9]*\)\.\*"$/\1/p' "$t/pyproject.toml")
+            uv lock --check --project "$t" --python "python$py"
+          done
       - run: uv run --frozen ruff check .
       - run: uv run --frozen pytest -q -rs
 

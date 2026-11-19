@@ -38,12 +38,22 @@ def uv_sync(project: Path, env: dict[str, str], *extra: str) -> None:
     subprocess.run(cmd, env=env, check=True)
 
 
+def interpreter(config: dict) -> str:
+    """The image's Python for a scanner: the minor version its requires-python pins
+    (==3.X.*). Barkley needs a newer one than the rest; the image has both."""
+    pin = config["project"].get("requires-python", "")
+    m = re.fullmatch(r"==(3\.\d+)\.\*", pin)
+    if m is None:
+        sys.exit(f"requires-python must pin one minor version (==3.X.*), not {pin!r}")
+    return f"/usr/local/bin/python{m[1]}"
+
+
 def install(project: Path, target: Path) -> list[str]:
     config = tomllib.loads((project / "pyproject.toml").read_text())
     scanner = re.split(r"[\s\[=<>!~@;]", config["project"]["dependencies"][0], maxsplit=1)[0]
     built = config.get("tool", {}).get("uv", {}).get("no-build-isolation-package", [])
     venv = target / project.name
-    env = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(venv)}
+    env = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(venv), "UV_PYTHON": interpreter(config)}
 
     # Everything from wheels first; then the one package that is built, if any, which
     # builds inside that environment with the build backend just installed from the lock.
