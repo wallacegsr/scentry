@@ -82,11 +82,17 @@ def test_add_target_queues_a_scan_and_escapes_untrusted_text(client):
 
 
 def test_bad_target_and_cross_site_post(client):
-    r = client.post("/targets", auth=AUTH, data={"profile": "owned", "source": "http://x/y"})
+    r = client.post("/targets", auth=AUTH, data={"profile": "owned", "source": "http://x/y",
+                                                 "mine": "1"})  # fmt: skip
     assert r.status_code == 303 and r.headers["location"].startswith("/code?error=")
     # Back on its tab: the mistake, and the form again with what was typed.
     page = client.get(r.headers["location"], auth=AUTH).text
     assert "clone URL" in page and 'value="http://x/y"' in page
+    assert 'name="mine" value="1" checked' in page
+    r = client.post("/targets", auth=AUTH, data={"profile": "owned", "source": "http://x/y"})
+    assert r.headers["location"].startswith("/repos?error=")  # not ticked: someone else's
+    page = client.get(r.headers["location"], auth=AUTH).text
+    assert 'name="mine" value="1">' in page  # and the box stays unticked
     r = client.post("/targets", auth=AUTH, data={"profile": "ha", "source": "not a repo"})
     assert r.headers["location"].startswith("/others?error=")
     # A crafted link can't put its own words on the page.
@@ -363,3 +369,45 @@ def test_grade_breakdown(client):
     data = json.loads(client.get(f"/targets/{tid}/export.json", auth=AUTH).text)
     assert [(i["rule_id"], i["deduction"]) for i in data["target"]["grade_issues"]] == [
         ("eval", 25)]  # fmt: skip
+
+
+def test_repositories_are_mine_or_others_under_nested_tabs(client):
+    def add(**data):
+        r = client.post("/targets", auth=AUTH, data=data)
+        return int(r.headers["location"].rsplit("/", 1)[1])
+
+    mine = add(profile="owned", source="https://github.com/me/app.git", mine="1")
+    theirs = add(profile="owned", source="https://github.com/someone/tool.git")
+    card = add(profile="ha", source="owner/card")
+    page = client.get("/code", auth=AUTH).text
+    # The tab bar: each tab counts what its lists hold, and opens the first of them.
+    assert '<a href="/code" class="tab on" aria-current="true">' in page
+    assert '<span>Repositories</span><span class="badge">2</span>' in page
+    assert '<span>Home Assistant</span><span class="badge">1</span>' in page
+    mine_tab = '<a href="/code" class="on" aria-current="page">Mine <span class="badge">1</span>'
+    assert mine_tab in page
+    assert '<a href="/repos">Others <span class="badge">1</span></a>' in page
+    assert "<h1>My code</h1>" in page and "me/app" in page and "someone/tool" not in page
+    page = client.get("/repos", auth=AUTH).text
+    assert "<h1>Other repositories</h1>" in page and "someone/tool" in page
+    assert "me/app" not in page
+    page = client.get("/marketplace", auth=AUTH).text
+    assert '<a href="/marketplace" class="on" aria-current="page">Marketplace</a>' in page
+    assert '<a href="/others">Not installed <span class="badge">1</span></a>' in page
+    assert '<a href="/repos"' not in page  # only its own tab's lists
+    assert 'href="/repos"' in client.get("/", auth=AUTH).text  # a card on the Overview
+
+    # A repository's page says whose it is, and moves it.
+    page = client.get(f"/targets/{theirs}", auth=AUTH).text
+    assert ('<nav class="crumbs"><a href="/code">Repositories</a><span class="sep">›</span>'
+            '<a href="/repos">Others</a><span class="sep">›</span>') in page  # fmt: skip
+    assert "Someone else&#39;s repository" in page and "Move to Mine" in page
+    r = client.post(f"/targets/{theirs}/mine", auth=AUTH, data={"on": "on"})
+    assert r.headers["location"] == f"/targets/{theirs}"
+    assert "someone/tool" in client.get("/code", auth=AUTH).text
+    assert "Move to Others" in client.get(f"/targets/{theirs}", auth=AUTH).text
+    assert client.post(f"/targets/{mine}/mine", auth=AUTH, data={"on": "x"}).status_code == 400
+    # A Home Assistant target isn't anyone's code.
+    assert client.post(f"/targets/{card}/mine", auth=AUTH, data={"on": "on"}).status_code == 400
+    page = client.get(f"/targets/{card}", auth=AUTH).text
+    assert "Move to" not in page and '<a href="/others">Not installed</a>' in page

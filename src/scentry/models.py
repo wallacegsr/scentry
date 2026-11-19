@@ -58,7 +58,12 @@ class Target(Base):
     notify_clean_updates: Mapped[bool | None] = mapped_column(default=None)  # ha, installed
     notify_failures: Mapped[bool | None] = mapped_column(default=None)
 
-    # My code: scan each new commit on the branch (ref, or the default branch). The
+    # A repository (profile "owned", scanned by every general scanner): the user's own
+    # code (Repositories › Mine), or someone else's (› Others) that they use, run or are
+    # deciding about. Says nothing about a Home Assistant target.
+    mine: Mapped[bool] = mapped_column(default=True, server_default=true())
+
+    # A repository: scan each new commit on the branch (ref, or the default branch). The
     # runner asks the git host for the branch's head now and then (commits.py).
     watch_commits: Mapped[bool] = mapped_column(default=True, server_default=true())
     head_sha: Mapped[str | None] = mapped_column(String(64), default=None)  # last seen

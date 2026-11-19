@@ -6,7 +6,7 @@
   stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
 {%- if name == "overview" %}<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>
 {%- elif name == "ha" %}<path d="M3.5 11 12 4l8.5 7"/><path d="M5.5 9.5V20h13V9.5"/><path d="M10 20v-5h4v5"/>
-{%- elif name == "code" %}<path d="m8 8-4 4 4 4"/><path d="m16 8 4 4-4 4"/><path d="m13.5 5-3 14"/>
+{%- elif name in ("code", "repos") %}<path d="m8 8-4 4 4 4"/><path d="m16 8 4 4-4 4"/><path d="m13.5 5-3 14"/>
 {%- elif name == "others" %}<path d="m3.5 7.5 8.5-4 8.5 4-8.5 4z"/><path d="M3.5 7.5v9l8.5 4 8.5-4v-9"/><path d="M12 11.5v9"/>
 {%- elif name == "marketplace" %}<path d="M5 8h14l-1.2 12H6.2z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/>
 {%- elif name == "system" %}<path d="M4 6.5h9M17 6.5h3M4 12h3M11 12h9M4 17.5h11M19 17.5h1"/><circle cx="15" cy="6.5" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17.5" r="2"/>
@@ -77,6 +77,15 @@
 
 {# Cards or a table: the same list either way, sorted and searched alike; the choice is
    remembered (a cookie). #}
+{# A tab's sub-tabs: its lists (and the Marketplace), each with its number of targets. #}
+{% macro subtabs(group, tab, counts) -%}
+<nav class="subtabs" aria-label="{{ group.label }}">
+  {%- for key, label in group.lists %}
+  <a href="/{{ key }}"{% if key == tab %} class="on" aria-current="page"{% endif %}>{{ label }}{% if key in counts %} <span class="badge">{{ counts[key] }}</span>{% endif %}</a>
+  {%- endfor %}
+</nav>
+{%- endmacro %}
+
 {% macro look_switch(look, links) -%}
 <nav class="segmented looks" aria-label="Show as">
   <a href="{{ links.cards }}" {% if look == "cards" %}class="on" aria-current="true"{% endif %}>{{ icon("cards", 14) }} Cards</a>
@@ -112,12 +121,15 @@
 
 {# The fields for adding a target of one profile; shown in a pop-up, or in the page
    after a mistake (a popover can't open itself without a script). #}
-{% macro add_target_fields(profile, source="") -%}
+{% macro add_target_fields(profile, source="", mine=true) -%}
 <input type="hidden" name="profile" value="{{ profile }}">
 {% if profile == "owned" %}
 <label class="field">Repository
-  <input name="source" required value="{{ source }}" placeholder="https://github.com/me/project.git" autocomplete="off">
-  <span class="hint">An HTTPS address of a repository you own.</span></label>
+  <input name="source" required value="{{ source }}" placeholder="https://github.com/owner/project.git" autocomplete="off">
+  <span class="hint">The HTTPS address of a Git repository.</span></label>
+<label class="check"><input type="checkbox" name="mine" value="1"{% if mine %} checked{% endif %}>
+  <span>It's my code<span class="hint">Listed under Mine. Otherwise it's under Others, and AI explanations are about
+    whether to use it rather than how to fix it.</span></span></label>
 <label class="field"><span>Branch or tag <span class="muted">(optional)</span></span>
   <input name="ref" placeholder="the default branch" autocomplete="off"></label>
 {% else %}

@@ -3,14 +3,14 @@
 {% from "_app.html" import sections, popularity %}
 {% block title %}{{ target.name }} · Scentry{% endblock %}
 {% block main %}
-<nav class="crumbs"><a href="/{{ tab }}">{{ tabs[tab] }}</a><span class="sep">›</span><span>{{ target.name }}</span></nav>
+<nav class="crumbs">{% for url, label in trail %}<a href="{{ url }}">{{ label }}</a><span class="sep">›</span>{% endfor %}<span>{{ target.name }}</span></nav>
 
 <div class="page-head">
   <div>
     <h1>{{ target.name }}</h1>
     <div class="meta">
       <span class="mono">{{ target.source }}{% if target.ref %} @ {{ target.ref }}{% endif %}</span>
-      <span>{{ "My code" if target.profile == "owned" else ("Home Assistant " ~ (target.hacs_kind or "integration")) }}</span>
+      <span>{% if target.profile == "owned" %}{{ "My code" if target.mine else "Someone else's repository" }}{% else %}Home Assistant {{ target.hacs_kind or "integration" }}{% endif %}</span>
       {% if target.origin == "hacs" %}<span>{% if target.hacs_removed_at %}uninstalled; no longer rescanned on a schedule{% else %}installed {{ target.installed_version }}{% endif %}</span>{% endif %}
       {% if target.interval_hours and not target.hacs_removed_at %}<span>rescanned every {{ target.interval_hours }} hours</span>{% endif %}
     </div>
@@ -32,6 +32,12 @@
   <form method="post" action="/targets/{{ target.id }}/watch">
     <input type="hidden" name="on" value="{{ 'off' if target.watch_commits else 'on' }}">
     <button class="ghost">{{ icon("eye", 16) }} {{ "Stop scanning new commits" if target.watch_commits else "Scan new commits" }}</button>
+  </form>
+  {% endif %}
+  {% if target.profile == "owned" %}
+  <form method="post" action="/targets/{{ target.id }}/mine">
+    <input type="hidden" name="on" value="{{ 'off' if target.mine else 'on' }}">
+    <button class="ghost" title="{{ 'Not your code: list it under Repositories › Others' if target.mine else 'Your code: list it under Repositories › Mine' }}">{{ icon("code", 16) }} {{ "Move to Others" if target.mine else "Move to Mine" }}</button>
   </form>
   {% endif %}
   {{ export_button() }}

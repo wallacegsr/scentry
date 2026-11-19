@@ -1,8 +1,9 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, result, grade, sevcounts, since, th, search, modal_head, add_target_fields, export_button, export_dialog, look_switch, sort_by %}
+{% from "_macros.html" import icon, result, grade, sevcounts, since, th, search, modal_head, add_target_fields, export_button, export_dialog, look_switch, sort_by, subtabs %}
 {% block title %}{{ tabs[tab] }} · Scentry{% endblock %}
 {% block main %}
 {% set sync = state.sync %}
+{{ subtabs(groups[group], tab, tab_counts) }}
 <div class="page-head">
   <div class="title">{{ icon(tab, 26) }}
     <div>
@@ -19,7 +20,8 @@
           · {{ "watching for installs" if sync.listening else "checking every few minutes" }}
         {% endif %}
         {% if sync and sync.requested_at and (not sync.last_attempt_at or sync.requested_at > sync.last_attempt_at) %} · Sync requested…{% endif %}
-      {% elif tab == "code" %}Repositories you own, graded A–F from their open findings.
+      {% elif tab == "code" %}Your own repositories, graded A–F from their open findings.
+      {% elif tab == "repos" %}Other people's repositories: code you use, run or are deciding about, graded A–F from their open findings.
       {% else %}Integrations and cards that aren't installed: checked before you install them, or since removed.
       {% endif %}
       </div>
@@ -43,7 +45,7 @@
   <div class="card-body">
     <p class="alert error">{{ error }}</p>
     <form method="post" action="/targets" class="stack">
-      {{ add_target_fields(profile, add_source) }}
+      {{ add_target_fields(profile, add_source, tab != "repos") }}
       <div class="form-actions"><a class="btn ghost" href="/{{ tab }}">Cancel</a><button>Add and scan</button></div>
     </form>
   </div>
@@ -57,7 +59,7 @@
 
 <section class="card" id="targets">
   <div class="card-head">
-    <h2>{{ table.total }} {{ {"ha": "installed", "code": "repositor" ~ ("ies" if table.total != 1 else "y"), "others": "checked"}[tab] }}
+    <h2>{{ table.total }} {{ {"ha": "installed", "others": "checked"}.get(tab, "repositor" ~ ("ies" if table.total != 1 else "y")) }}
       {%- if busy %} <span class="pill live-pill">{{ busy }} scanning</span>{% endif %}</h2>
     {{ search(table, "Search by name, repository or version", "target") }}
     {{ look_switch(look, looks) }}
@@ -133,7 +135,8 @@
       <tr><td colspan="6" class="empty">
         {% if table.q %}Nothing matches “{{ table.q }}”.
         {% elif tab == "ha" %}Nothing installed through the Marketplace yet{% if not sync %}, or Home Assistant isn't connected{% endif %}.
-        {% elif tab == "code" %}No repositories yet. Add one with “Add a target”.
+        {% elif tab == "code" %}No repositories of yours yet. Add one with “Add a target”.
+        {% elif tab == "repos" %}No one else's repositories yet. Add one with “Add a target”, or move one here from its page.
         {% else %}Nothing checked yet. Search the Marketplace, or add one by owner/repo.{% endif %}
       </td></tr>
     {% endfor %}
@@ -158,7 +161,7 @@
   {{ modal_head("add-target", "Add a target") }}
   <div class="modal-body">
     <form method="post" action="/targets" class="stack">
-      {{ add_target_fields(profile) }}
+      {{ add_target_fields(profile, "", tab != "repos") }}
       <div class="form-actions">
         <button type="button" class="ghost" popovertarget="add-target" popovertargetaction="hide">Cancel</button>
         <button>{{ icon("scan", 16) }} Add and scan</button></div>

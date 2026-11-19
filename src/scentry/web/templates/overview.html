@@ -43,7 +43,7 @@
       <span class="stat-name">{{ icon(key) }}{{ label }}</span>
       {% if s.busy %}<span class="pill live-pill">{{ s.busy }} scanning</span>{% endif %}
     </div>
-    <div class="stat-num">{{ s.count }}<small>{{ {"ha": "installed", "code": "repositor" ~ ("ies" if s.count != 1 else "y"), "others": "checked"}[key] }}</small></div>
+    <div class="stat-num">{{ s.count }}<small>{{ {"ha": "installed", "others": "checked"}.get(key, "repositor" ~ ("ies" if s.count != 1 else "y")) }}</small></div>
     {% if s.count %}
     {{ gradebar(s.grades, s.count) }}
     <div class="legend">
@@ -54,6 +54,7 @@
     {% else %}
     <p class="muted small">{{ {"ha": "Connect Home Assistant to scan what the Marketplace installs.",
       "code": "Add a repository of your own.",
+      "repos": "Check someone else's repository before you use or run it.",
       "others": "Check an integration or card before you install it."}[key] }}</p>
     {% endif %}
     {% set crit = s.sev.get("critical", 0) + s.sev.get("high", 0) %}

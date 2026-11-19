@@ -3,14 +3,14 @@
 A self-hosted code security scanning portal, run as a Docker stack. It answers two
 different questions with one pipeline:
 
-| | **My code** | **HA integration** |
+| | **Repository** | **HA integration** |
 |---|---|---|
-| Question | Is my code vulnerable? | Is this stranger's code safe to install? |
-| Target | A git repository you own | A Home Assistant integration or card (`owner/repo`) |
+| Question | Is my code vulnerable? Is this project I run safe? | Is this stranger's code safe to install? |
+| Target | Any Git repository: yours, or someone else's | A Home Assistant integration or card (`owner/repo`) |
 | Result | Grade A–F from open findings | Barkley's score and verdict for that version |
 | Findings | Tracked across scans: open, fixed, suppressed | Listed per scan |
 
-A repository of your own that contains a Home Assistant integration gets both: the
+A repository that contains a Home Assistant integration gets both: the
 general scanners and the Home Assistant checks.
 
 > **Status: early.** The pipeline, the portal and the stack work end to end, but it is
@@ -21,13 +21,13 @@ general scanners and the Home Assistant checks.
 
 | Scanner | Looks for | Runs on |
 |---|---|---|
-| [Semgrep](https://semgrep.dev) | Insecure code patterns, most languages | My code |
-| [Gitleaks](https://github.com/gitleaks/gitleaks) | Secrets, through the whole git history (values redacted) | My code |
-| [OSV-Scanner](https://github.com/google/osv-scanner) | Known-vulnerable dependencies | My code |
-| [Trivy](https://trivy.dev) | Dockerfile, compose, Kubernetes, Terraform misconfiguration | My code |
-| [zizmor](https://github.com/zizmorcore/zizmor) | GitHub Actions workflow weaknesses | My code, when it has workflows |
-| [Bandit](https://bandit.readthedocs.io) | Python-specific issues | My code, when it has Python |
-| [Barkley](https://github.com/SeriesOfTubez/ha-barkley) | Home Assistant: token exfiltration, dependencies resolved as HA installs them, malware heuristics, undeclared hosts, release and publisher history | HA integrations; my code when it is one |
+| [Semgrep](https://semgrep.dev) | Insecure code patterns, most languages | Repositories |
+| [Gitleaks](https://github.com/gitleaks/gitleaks) | Secrets, through the whole git history (values redacted) | Repositories |
+| [OSV-Scanner](https://github.com/google/osv-scanner) | Known-vulnerable dependencies | Repositories |
+| [Trivy](https://trivy.dev) | Dockerfile, compose, Kubernetes, Terraform misconfiguration | Repositories |
+| [zizmor](https://github.com/zizmorcore/zizmor) | GitHub Actions workflow weaknesses | Repositories with workflows |
+| [Bandit](https://bandit.readthedocs.io) | Python-specific issues | Repositories with Python |
+| [Barkley](https://github.com/SeriesOfTubez/ha-barkley) | Home Assistant: token exfiltration, dependencies resolved as HA installs them, malware heuristics, undeclared hosts, release and publisher history | HA integrations; a repository that holds one |
 
 Rules that hold everywhere:
 
@@ -46,7 +46,7 @@ Rules that hold everywhere:
 - **A finding is only marked fixed when the scanner that found it ran successfully**
   and no longer reports it.
 
-How my code is graded: each **problem** costs points once (critical 25, high 10,
+How a repository is graded: each **problem** costs points once (critical 25, high 10,
 medium 3, low 1), however many places it is found in: thirteen unpinned actions are one
 thing to fix. Two scanners' rules that flag exactly the same places count once, at the
 worse severity. An open critical caps the grade at D, an open high at B, and an
@@ -60,7 +60,7 @@ vulnerabilities another finding reports is marked **same vulnerability** on the
 target's page: it is counted, and announced, once. Suppressing a vulnerability under one
 name covers its other names too.
 
-When my code is scanned: when it's added, on its interval (weekly by default, for new
+When a repository is scanned: when it's added, on its interval (weekly by default, for new
 advisories and rules), when you press **Scan now**, and on each new commit. Every
 `SCENTRY_COMMIT_POLL_MINUTES` (15), when it has nothing queued, the runner asks the git
 host what the branch (or the default branch) points at, with `git ls-remote` and the
@@ -71,17 +71,22 @@ watched.
 
 ### The portal
 
-Tabs across the top: **Overview**, **Home Assistant** (what the Marketplace has
-installed), **My code**, **Other integrations** (checked before installing, or since
-removed), **Marketplace** and **System** (Home Assistant, notifications, AI explanations, the
-log and the exports). The overview shows each tab's grades at a glance, what needs a look
-(failed scans, low scores, an update that scores worse, critical or high findings) and
-the latest scans. A row leads to its page: a target, then each finding on a page of its
-own.
+Tabs across the top: **Overview**, **Home Assistant**, **Repositories** and **System**
+(Home Assistant, notifications, AI explanations, the log and the exports). Home
+Assistant has three lists under it: **Installed** (what the Marketplace has installed),
+**Not installed** (checked before installing, or since removed) and **Marketplace**.
+Repositories has two: **Mine**, your own code, and **Others**, repositories you use,
+run or are deciding about. They are scanned the same way; an AI explanation of a
+finding in someone else's code is written for a person who can't change it. Each
+repository's page moves it between the two.
+
+The overview shows each list's grades at a glance, what needs a look (failed scans, low
+scores, an update that scores worse, critical or high findings) and the latest scans. A
+row leads to its page: a target, then each finding on a page of its own.
 
 Every table sorts by clicking a column heading and has a search box. Both are done by
 the server, as part of the address, so a sorted or filtered table can be bookmarked.
-**Add a target** is a button on the My code and Other integrations tabs; it, and the
+**Add a target** is a button on the Mine, Others and Not installed lists; it, and the
 other forms (notifications, suppressing, removing), open in a pop-up. **Export**, in
 the header of the overview, each tab and each target, downloads what that page covers:
 JSON, findings as CSV (open, or all), and for a target SARIF too. Light and dark follow
@@ -312,7 +317,7 @@ What gets a message:
 | An offered update does, or scores 10 points worse than the installed version (the message lists what it changes) | on |
 | The daily re-check finds a new advisory: newly under the threshold, 10 points worse, or a new high or critical vulnerability | on |
 | Every offered update, including the fine ones | `SCENTRY_NOTIFY_CLEAN_UPDATES=true` |
-| My code: new or reopened findings at `SCENTRY_NOTIFY_MIN_SEVERITY` or worse | high |
+| A repository (yours or not): new or reopened findings at `SCENTRY_NOTIFY_MIN_SEVERITY` or worse | high |
 | A target's scans start failing; the Home Assistant sync fails for 30 minutes | on |
 
 These are the defaults. A target's page has **Notifications**, where it can be muted or

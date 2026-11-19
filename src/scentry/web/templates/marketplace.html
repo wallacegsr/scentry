@@ -1,7 +1,8 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, result, th %}
+{% from "_macros.html" import icon, result, th, subtabs %}
 {% block title %}Marketplace · Scentry{% endblock %}
 {% block main %}
+{{ subtabs(groups[group], tab, tab_counts) }}
 <div class="page-head">
   <div class="title">{{ icon("marketplace", 26) }}
     <div><h1>Search the Marketplace</h1>
@@ -13,7 +14,7 @@
 <section class="card"><div class="empty-state">{{ icon("marketplace", 32) }}
   <p>The catalog comes from Home Assistant: once the sync is connected
   (SCENTRY_HASS_URL and SCENTRY_HASS_TOKEN), every integration and card the Marketplace
-  offers can be searched here. Until then, add one by owner/repo under <a href="/others">Other integrations</a>.</p>
+  offers can be searched here. Until then, add one by owner/repo under <a href="/others">Not installed</a>.</p>
 </div></section>
 {% else %}
 <section class="card" id="catalog">

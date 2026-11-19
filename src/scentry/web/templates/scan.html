@@ -3,7 +3,7 @@
 {% from "_app.html" import sections, popularity %}
 {% block title %}Scan {{ scan.id }} · {{ target.name }} · Scentry{% endblock %}
 {% block main %}
-<nav class="crumbs"><a href="/{{ tab }}">{{ tabs[tab] }}</a><span class="sep">›</span>
+<nav class="crumbs">{% for url, label in trail %}<a href="{{ url }}">{{ label }}</a><span class="sep">›</span>{% endfor %}
   <a href="/targets/{{ target.id }}">{{ target.name }}</a><span class="sep">›</span><span>Scan {{ scan.id }}</span></nav>
 
 <div class="page-head">

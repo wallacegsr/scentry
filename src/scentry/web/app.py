@@ -17,6 +17,7 @@ import threading
 import time
 import unicodedata
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import urlencode, urlsplit
@@ -170,17 +171,48 @@ def ago(when: datetime.datetime | None, now: datetime.datetime | None = None) ->
     return "just now"
 
 
-# The portal's tabs: what each lists, and the profile a target added there gets.
-TABS = {"ha": "Home Assistant", "code": "My code", "others": "Other integrations"}
-TAB_PROFILE = {"code": "owned", "others": "ha"}
+# The portal's lists of targets (each at /<key>), by name, and the profile a target added
+# to one gets.
+TABS = {"ha": "Home Assistant", "others": "Other integrations", "code": "My code",
+        "repos": "Other repositories"}  # fmt: skip
+TAB_PROFILE = {"others": "ha", "code": "owned", "repos": "owned"}
+
+
+@dataclass(frozen=True)
+class Group:
+    """A tab of the tab bar, and the row of sub-tabs under it: its lists (and the
+    Marketplace), each (key, short name). The tab opens the first."""
+
+    label: str
+    icon: str
+    lists: tuple[tuple[str, str], ...]
+
+
+GROUPS = {
+    "hass": Group("Home Assistant", "ha", (("ha", "Installed"), ("others", "Not installed"),
+                                            ("marketplace", "Marketplace"))),
+    "repositories": Group("Repositories", "code", (("code", "Mine"), ("repos", "Others"))),
+}  # fmt: skip
+GROUP_OF = {key: name for name, g in GROUPS.items() for key, _ in g.lists}
 
 
 def category(target: Target) -> str:
-    """Which tab a target is listed on: installed in Home Assistant, my code, or an
-    integration or card that isn't installed (checked before installing, or removed)."""
+    """Which list a target is on: installed in Home Assistant; an integration or card that
+    isn't installed (checked before installing, or removed); my code; or someone else's."""
     if target.origin == "hacs" and target.hacs_removed_at is None:
         return "ha"
-    return "code" if target.profile == "owned" else "others"
+    if target.profile != "owned":
+        return "others"
+    return "code" if target.mine else "repos"
+
+
+def trail(tab: str | None) -> list[tuple[str, str]]:
+    """The breadcrumbs to a list: its tab, then its sub-tab, as (url, name)."""
+    group = GROUPS.get(GROUP_OF.get(tab or ""))
+    if group is None:
+        return []
+    short = dict(group.lists)[tab]
+    return [(f"/{group.lists[0][0]}", group.label), (f"/{tab}", short)]
 
 
 _SCAN_REF = re.compile(r"\bscan (\d{1,10})\b")
@@ -441,9 +473,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             counts[category(target)] += 1
         state = context.get("state") or services(session, now)
         context.setdefault("ai_name", state["ai_name"])
-        context.update(tab_counts=counts, tabs=TABS,
-                       system_alert=any(c[1] == "bad" for c in state["chips"]))  # fmt: skip
         context.setdefault("tab", None)
+        group_counts = {name: sum(counts.get(key, 0) for key, _ in g.lists)
+                        for name, g in GROUPS.items()}  # fmt: skip
+        context.update(tab_counts=counts, tabs=TABS, groups=GROUPS, group_counts=group_counts,
+                       group=GROUP_OF.get(context["tab"] or ""), trail=trail(context["tab"]),
+                       system_alert=any(c[1] == "bad" for c in state["chips"]))  # fmt: skip
         return templates.TemplateResponse(request, name, context)
 
     def get_target(session: Session, target_id: int) -> Target:
@@ -575,6 +610,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    user: str = user_dep):  # fmt: skip
         return listing(request, session, "others", error, user)
 
+    @app.get("/repos")
+    def tab_repos(request: Request, error: str = "", session: Session = session_dep,
+                  user: str = user_dep):  # fmt: skip
+        return listing(request, session, "repos", error, user)
+
     def listing(request: Request, session: Session, tab: str, error: str, user: str):
         """One tab's targets, as a table that sorts and searches."""
         now = utcnow()
@@ -694,11 +734,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         source: str = Form(...),
         ref: str = Form(""),
         interval_hours: int = Form(168),
+        mine: str = Form(""),  # a repository: "1" for my code (a ticked box)
         session: Session = session_dep,
         user: str = user_dep,
     ):
         source, ref = source.strip(), ref.strip() or None
-        tab = "code" if profile == "owned" else "others"
+        mine_too = profile == "owned" and mine == "1"
+        tab = ("code" if mine_too else "repos") if profile == "owned" else "others"
         try:
             if profile not in PROFILES:
                 raise HTTPException(400, "Unknown profile.")
@@ -717,6 +759,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             source=source,
             ref=ref,
             interval_hours=max(0, min(interval_hours, 24 * 90)),
+            mine=mine_too,
         )
         session.add(target)
         session.commit()
@@ -999,6 +1042,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(400)
         target.watch_commits = on == "on"
         target.head_checked_at = None  # look straight away
+        session.commit()
+        return RedirectResponse(f"/targets/{target_id}", 303)
+
+    @app.post("/targets/{target_id}/mine")
+    def target_mine(target_id: int, on: str = Form(...), session: Session = session_dep,
+                    user: str = user_dep):  # fmt: skip
+        """A repository is my code (Repositories › Mine), or someone else's (› Others)."""
+        target = get_target(session, target_id)
+        if on not in ("on", "off") or target.profile != "owned":
+            raise HTTPException(400)
+        target.mine = on == "on"
         session.commit()
         return RedirectResponse(f"/targets/{target_id}", 303)
 

@@ -20,10 +20,9 @@
     <nav class="tabbar" aria-label="Sections">
       <div class="wrap tabs">
         <a href="/" class="tab{{ ' on' if tab == 'overview' }}" {% if tab == 'overview' %}aria-current="page"{% endif %}>{{ icon("overview") }}<span>Overview</span></a>
-        {% for key, label in tabs.items() %}
-        <a href="/{{ key }}" class="tab{{ ' on' if tab == key }}" {% if tab == key %}aria-current="page"{% endif %}>{{ icon(key) }}<span>{{ label }}</span><span class="badge">{{ tab_counts[key] }}</span></a>
+        {% for key, g in groups.items() %}
+        <a href="/{{ g.lists[0][0] }}" class="tab{{ ' on' if group == key }}" {% if group == key %}aria-current="true"{% endif %}>{{ icon(g.icon) }}<span>{{ g.label }}</span><span class="badge">{{ group_counts[key] }}</span></a>
         {% endfor %}
-        <a href="/marketplace" class="tab{{ ' on' if tab == 'marketplace' }}" {% if tab == 'marketplace' %}aria-current="page"{% endif %}>{{ icon("marketplace") }}<span>Marketplace</span></a>
         <a href="/system" class="tab{{ ' on' if tab == 'system' }}" {% if tab == 'system' %}aria-current="page"{% endif %}>{{ icon("system") }}<span>System</span>
           {%- if system_alert %}<span class="alert-dot" title="A service needs a look"></span>{% endif %}</a>
       </div>

@@ -266,3 +266,19 @@ def test_the_portal(settings):
     assert client.post(f"/targets/{tid}/delete", auth=auth).status_code == 303
     with db.SessionLocal() as session:
         assert session.query(AiNote).count() == 0
+
+
+def test_whose_code_the_question_says_it_is(session):
+    """Someone else's repository is explained to a person deciding whether to use it, not
+    to its owner: they can't change it."""
+    f = owned_finding(session)
+    text, _ = ai.finding_prompt(session, f)
+    assert ai.kind(f.target) == "mine"
+    assert "Target: app, the user's own code" in text and ai.FINDING_ASK["mine"] in text
+    f.target.mine = False
+    text, _ = ai.finding_prompt(session, f)
+    assert ai.kind(f.target) == "theirs"
+    assert "Target: app, someone else's repository" in text
+    assert ai.FINDING_ASK["theirs"] in text and ai.FINDING_ASK["mine"] not in text
+    f.target.profile = "ha"  # an add-on is never anyone's own code, whatever it says
+    assert ai.kind(f.target) == "ha"
