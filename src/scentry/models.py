@@ -85,6 +85,9 @@ class Target(Base):
         back_populates="target", cascade="all, delete-orphan"
     )
     ai_notes: Mapped[list[AiNote]] = relationship(cascade="all, delete-orphan")
+    rule_suppressions: Mapped[list[RuleSuppression]] = relationship(
+        cascade="all, delete-orphan", order_by="RuleSuppression.id"
+    )
 
 
 class Scan(Base):
@@ -180,8 +183,33 @@ class Finding(Base):
     suppression_note: Mapped[str | None] = mapped_column(Text, default=None)
     suppressed_by: Mapped[str | None] = mapped_column(String(200), default=None)
     suppressed_until: Mapped[datetime.datetime | None] = mapped_column(default=None)
+    # Suppressed as one of a rule's findings in some files (a RuleSuppression's id), not
+    # on its own; removing that suppression opens it again.
+    rule_suppression_id: Mapped[int | None] = mapped_column(default=None)
 
     target: Mapped[Target] = relationship(back_populates="findings")
+
+
+class RuleSuppression(Base):
+    """One scanner rule suppressed in a target's files that match a pattern: the open
+    findings it matches when it's made, and each finding a scan opens there later, until
+    it expires. A finding reopened by hand stays open."""
+
+    __tablename__ = "rule_suppressions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    target_id: Mapped[int] = mapped_column(ForeignKey("targets.id"), index=True)
+    scanner: Mapped[str] = mapped_column(String(50))
+    rule_id: Mapped[str] = mapped_column(String(300))
+    pattern: Mapped[str] = mapped_column(String(500))  # findings.path_pattern()
+    reason: Mapped[str] = mapped_column(String(50))
+    note: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime.datetime] = mapped_column(default=utcnow)
+    until: Mapped[datetime.datetime | None] = mapped_column(default=None)
+
+    def active(self, now: datetime.datetime) -> bool:
+        return self.until is None or self.until > now
 
 
 class HassSync(Base):

@@ -535,3 +535,7 @@ ul.bugs { display: grid; gap: 4px; }
 .subtabs .badge { min-width: 20px; padding: 0 6px; border-radius: 999px; font-size: 0.72rem; line-height: 17px;
   text-align: center; background: var(--surface-2); color: var(--muted); }
 .subtabs a.on .badge { background: var(--accent-soft); color: var(--accent-strong); }
+
+/* A field and its button on one line, the field taking the room (a pattern of files). */
+.field .inline.grow { display: flex; }
+.field .inline.grow input { flex: 1; min-width: 0; }

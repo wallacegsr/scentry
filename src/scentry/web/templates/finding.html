@@ -24,7 +24,9 @@
 </div>
 
 {% if f.status == "suppressed" %}
-<p class="alert warn small">{{ (f.suppression_reason or "")|replace("_", " ")|capitalize }} by {{ f.suppressed_by }}:
+<p class="alert warn small">{{ (f.suppression_reason or "")|replace("_", " ")|capitalize }} by {{ f.suppressed_by }}
+  {%- if by_rule %}, for this rule in files matching <code>{{ by_rule.pattern }}</code>
+  (<a href="/targets/{{ target.id }}#rules">rules suppressed in {{ target.name }}</a>){% endif %}:
   {{ f.suppression_note }} · {{ "until " ~ when(f.suppressed_until) if f.suppressed_until else "permanent" }}</p>
 {% endif %}
 
@@ -108,6 +110,10 @@
       {% if alike %}
       <label class="check"><input type="checkbox" name="same_rule" value="1">
         <span>Also the {{ alike }} other open finding{{ "s" if alike != 1 }} from this rule in {{ target.name }}, with the same reason and note</span></label>
+      {% endif %}
+      {% if f.file %}
+      <p class="small muted">Or <a href="/findings/{{ f.id }}/suppress-rule">suppress this rule in a folder</a>:
+        its findings there now, and those later scans find.</p>
       {% endif %}
       <div class="form-actions">
         <button type="button" class="ghost" popovertarget="suppress" popovertargetaction="hide">Cancel</button>

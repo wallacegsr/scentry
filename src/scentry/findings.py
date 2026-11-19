@@ -4,17 +4,71 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import re
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from scentry import sarif
-from scentry.models import SEVERITY_RANK, Finding, Scan, Target, utcnow
+from scentry.models import SEVERITY_RANK, Finding, RuleSuppression, Scan, Target, utcnow
 from scentry.scanners.base import RawFinding, ScannerRun
 
 SUPPRESSION_REASONS = ("false_positive", "accepted_risk", "wont_fix")
 DEFAULT_SUPPRESSION_DAYS = 90
+PATTERN_CHARS = 500
+
+
+# --- suppressing a rule in some files ------------------------------------------------
+
+
+def path_pattern(text: str) -> str | None:
+    """The files a rule is suppressed in, as written by a person, made tidy: a path in
+    the repository, where a folder ends in "/" (and holds what's under it), * matches
+    within a name and ** across folders. None when it isn't one, or would cover every
+    file: a rule is never suppressed across a whole repository this way."""
+    pattern = text.strip().replace(chr(92), "/")
+    while pattern.startswith(("./", "/")):
+        pattern = pattern[1:] if pattern.startswith("/") else pattern[2:]
+    if not pattern or len(pattern) > PATTERN_CHARS or "//" in pattern:
+        return None
+    if not pattern.strip("*?/."):
+        return None  # "**", "*/", "./": everything
+    return pattern
+
+
+def _pattern_regex(pattern: str) -> str:
+    if pattern.endswith("/"):
+        pattern += "**"
+    out, i = [], 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")  # any folders, or none
+            i += 3
+        elif pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        else:
+            c = pattern[i]
+            out.append("[^/]*" if c == "*" else "[^/]" if c == "?" else re.escape(c))
+            i += 1
+    return "".join(out)
+
+
+def path_matches(pattern: str, path: str | None) -> bool:
+    return bool(path) and re.fullmatch(_pattern_regex(pattern), path) is not None
+
+
+def covers(rule: RuleSuppression, f: Finding, now: datetime.datetime) -> bool:
+    """Whether a rule suppression takes in this finding (its expiry aside from `now`)."""
+    return (rule.active(now) and f.scanner == rule.scanner and f.rule_id == rule.rule_id
+            and path_matches(rule.pattern, f.file))  # fmt: skip
+
+
+def suppress_by_rule(f: Finding, rule: RuleSuppression) -> None:
+    f.status, f.rule_suppression_id = "suppressed", rule.id
+    f.suppression_reason, f.suppression_note = rule.reason, rule.note
+    f.suppressed_by, f.suppressed_until = rule.created_by, rule.until
 
 
 def fingerprint(f: RawFinding) -> str:
@@ -40,7 +94,8 @@ def reconcile(
 ) -> None:
     """Fold one scan's results into the target's findings.
 
-    - new fingerprint -> open; seen again after being fixed -> reopened
+    - new fingerprint -> open; seen again after being fixed -> reopened; either way
+      suppressed instead, when a rule suppression covers it
     - a suppression past its expiry -> open again, for another look
     - open and not reported any more -> fixed, but only if the scanner that found it
       ran successfully this time (a broken scanner fixes nothing)
@@ -53,8 +108,11 @@ def reconcile(
     for f in existing.values():
         if f.status == "suppressed" and f.suppressed_until and f.suppressed_until <= now:
             f.status = "open"
-            f.suppressed_until = None
+            f.suppressed_until, f.rule_suppression_id = None, None
             f.opened_scan_id = scan.id  # back for another look
+    rules = [r for r in session.scalars(select(RuleSuppression).where(
+        RuleSuppression.target_id == target.id).order_by(RuleSuppression.id)) if r.active(now)]
+    opened: list[Finding] = []
 
     ran_ok = {r.name for r in runs if r.state == "ok"}
     seen: set[str] = set()
@@ -83,15 +141,20 @@ def reconcile(
                             opened_scan_id=scan.id)  # fmt: skip
                 session.add(f)
                 existing[fp] = f
+                opened.append(f)
             elif f.status == "fixed":
                 f.status = "open"
                 f.fixed_at = None
                 f.opened_scan_id = scan.id
+                opened.append(f)
             f.title, f.message, f.severity = raw.title, raw.message, raw.severity
             f.category, f.file, f.line, f.evidence = raw.category, raw.file, raw.line, raw.evidence
             f.vulns, f.details = raw.vulns, raw.details
             f.last_seen_at, f.last_seen_scan_id = now, scan.id
 
+    for f in opened:  # not announced, not counted: a rule suppression covers it
+        if rule := next((r for r in rules if covers(r, f, now)), None):
+            suppress_by_rule(f, rule)
     for fp, f in existing.items():
         if fp not in seen and f.status == "open" and f.scanner in ran_ok:
             f.status = "fixed"

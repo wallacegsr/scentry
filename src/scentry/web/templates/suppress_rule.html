@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% from "_macros.html" import sev %}
+{% block title %}Suppress a rule · {{ target.name }} · Scentry{% endblock %}
+{% block main %}
+<nav class="crumbs">{% for url, label in trail %}<a href="{{ url }}">{{ label }}</a><span class="sep">›</span>{% endfor %}
+  <a href="/targets/{{ target.id }}#findings">{{ target.name }}</a><span class="sep">›</span>
+  <a href="/findings/{{ f.id }}">Finding</a><span class="sep">›</span><span>Suppress the rule</span></nav>
+
+<div class="page-head">
+  <div><h1>Suppress a rule in some files</h1>
+    <div class="sub"><span class="mono">{{ f.rule_id }}</span> · {{ f.scanner }} · in {{ target.name }}</div></div>
+</div>
+
+{% if problem %}<p class="alert error">{{ problem }}</p>{% endif %}
+
+<section class="card">
+  <div class="card-body stack">
+    <p class="small">Every finding of this rule in the files below is suppressed: the open ones now, and each one a
+      later scan finds there, <strong>new code included</strong>, until the review date. Findings of other rules, and
+      of this rule in other files, aren't touched. A finding you reopen by hand stays open.</p>
+    <form method="get" action="/findings/{{ f.id }}/suppress-rule">
+      <label class="field">Files
+        <span class="inline grow"><input name="pattern" value="{{ pattern }}" class="mono" required>
+          <button class="ghost">Check</button></span>
+        <span class="hint">A folder ends in /, as tests/; * matches within a name, ** across folders, as src/**/*.html.
+          Paths are as in the repository.</span></label>
+    </form>
+  </div>
+</section>
+
+{% if wrong %}
+<p class="alert warn">{{ wrong }}</p>
+{% else %}
+<section class="card">
+  <div class="card-head"><h2>In <span class="mono">{{ tidy }}</span>, open now</h2>
+    <span class="muted small">{{ matched|length }} finding{{ "s" if matched|length != 1 }}</span></div>
+  {% if matched %}
+  <ul class="picked">
+    {% for m in matched %}
+    <li><div class="what">{{ sev(m.severity) }} <a href="/findings/{{ m.id }}">{{ m.title }}</a>
+      <div class="sub small muted"><span class="mono">{{ m.file }}{% if m.line %}:{{ m.line }}{% endif %}</span></div></div></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="card-body"><p class="empty">None open now: it covers the ones later scans find.</p></div>
+  {% endif %}
+</section>
+
+<form method="post" action="/findings/{{ f.id }}/suppress-rule" class="stack">
+  <input type="hidden" name="pattern" value="{{ tidy }}">
+  <section class="card">
+    <div class="card-body stack">
+      <label class="field">Reason
+        <select name="reason">{% for r in reasons %}<option value="{{ r }}" {% if r == reason %}selected{% endif %}>{{ r.replace("_", " ")|capitalize }}</option>{% endfor %}</select>
+      </label>
+      <label class="field">Why <input name="note" value="{{ note }}" required></label>
+      <label class="field">Bring it back for review in
+        <span class="inline"><input name="days" type="number" min="0" value="{{ days }}" class="short"> days</span>
+        <span class="hint">0: never. Then the rule is no longer suppressed there, and its findings open again.</span></label>
+    </div>
+  </section>
+  <div class="form-actions">
+    <a class="btn ghost" href="/findings/{{ f.id }}">Cancel</a>
+    <button>Suppress the rule in {{ tidy }}</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

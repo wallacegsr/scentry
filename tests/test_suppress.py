@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from scentry import db
 from scentry.config import Settings
-from scentry.models import Finding, Target, utcnow
+from scentry.models import Finding, RuleSuppression, Target, utcnow
 from scentry.web.app import create_app
 
 AUTH = ("admin", "pw")
@@ -146,3 +146,89 @@ def test_suppress_one_alone(client):
     form = {"reason": "false_positive", "note": "just this one"}
     assert client.post("/findings/2/suppress", data=form, auth=AUTH).status_code == 303
     assert [f.status for f in _findings().values()][:4] == ["open", "suppressed", "open", "open"]
+
+
+def test_suppress_a_rule_in_a_folder(client):
+    with db.SessionLocal() as s:
+        for n, rule, file in ((7, "no-csrf-token", "web/templates/a.html"),
+                              (8, "no-csrf-token", "web/templates/x/b.html"),
+                              (9, "no-csrf-token", "web/other.html"),
+                              (10, "bind-all", "web/templates/c.html"), (11, "bind-all", None)):
+            s.add(Finding(target_id=1, fingerprint=f"f{n}", scanner="semgrep", rule_id=rule,
+                          title=f"{rule} {n}", severity="medium", file=file))  # fmt: skip
+        s.commit()
+    assert 'href="/findings/7/suppress-rule">suppress this rule in a folder</a>' in client.get(
+        "/findings/7", auth=AUTH).text  # fmt: skip
+    assert "suppress-rule" not in client.get("/findings/11", auth=AUTH).text  # no file
+    assert client.get("/findings/11/suppress-rule", auth=AUTH).status_code == 400
+
+    # It starts from the finding's folder, and shows what a pattern takes in before saving.
+    page = client.get("/findings/7/suppress-rule", auth=AUTH).text
+    assert 'name="pattern" value="web/templates/" class="mono" required>' in page
+    assert "2 findings" in page and "no-csrf-token 8" in page
+    assert "no-csrf-token 9" not in page and "bind-all 10" not in page
+    assert '<input type="hidden" name="pattern" value="web/templates/">' in page
+    assert "3 findings" in client.get("/findings/7/suppress-rule", params={"pattern": "web/"},
+                                      auth=AUTH).text  # fmt: skip
+    for pattern, says in (("**", "can&#39;t be suppressed in every file"),
+                          ("tests/", "this finding&#39;s own file, web/templates/a.html")):
+        page = client.get("/findings/7/suppress-rule", params={"pattern": pattern}, auth=AUTH).text
+        assert says in page and 'method="post"' not in page
+
+    form = {"pattern": "web/templates/", "reason": "false_positive", "note": "Jinja, not Django",
+            "days": "0"}  # fmt: skip
+    for change, says in (({"pattern": "**"}, "every file"), ({"note": " "}, "needs a note"),
+                         ({"reason": "nope"}, "needs a reason")):
+        r = client.post("/findings/7/suppress-rule", data={**form, **change}, auth=AUTH)
+        assert r.status_code == 400 and says in r.text
+    cross = client.post("/findings/7/suppress-rule", data=form, auth=AUTH,
+                        headers={"Sec-Fetch-Site": "cross-site"})  # fmt: skip
+    assert cross.status_code == 403 and _findings()[7].status == "open"
+
+    ok = client.post("/findings/7/suppress-rule", data=form, auth=AUTH)
+    assert ok.status_code == 303 and ok.headers["location"] == "/targets/1#rules"
+    found = _findings()
+    for i in (7, 8):
+        assert (found[i].status, found[i].rule_suppression_id, found[i].suppressed_until,
+                found[i].suppression_note) == ("suppressed", 1, None, "Jinja, not Django")
+    assert [found[i].status for i in (1, 9, 10)] == ["open"] * 3
+    again = client.post("/findings/9/suppress-rule", data={**form, "pattern": "web/"}, auth=AUTH)
+    assert again.status_code == 303  # a wider one is another suppression
+    assert _findings()[9].rule_suppression_id == 2
+    same = client.post("/findings/9/suppress-rule", data={**form, "pattern": "web/"}, auth=AUTH)
+    assert same.status_code == 400 and "already suppressed in files matching web/" in same.text
+
+    # The target lists them, its suppressed findings and each finding say which covers them.
+    page = client.get("/targets/1", auth=AUTH).text
+    assert '<section class="card" id="rules">' in page and "Jinja, not Django" in page
+    assert 'href="?status=suppressed&amp;q=no-csrf-token#findings">2</a>' in page
+    assert ('the rule, in <span class="mono">web/templates/</span>'
+            in client.get("/targets/1?status=suppressed", auth=AUTH).text)  # fmt: skip
+    assert "for this rule in files matching <code>web/templates/</code>" in client.get(
+        "/findings/8", auth=AUTH).text  # fmt: skip
+    export = client.get("/targets/1/export.json", auth=AUTH).json()["target"]
+    assert [(r["pattern"], r["active"], r["until"]) for r in export["rule_suppressions"]] == [
+        ("web/templates/", True, None), ("web/", True, None)]
+    by_id = {f["id"]: f for f in export["findings"]}
+    assert by_id[8]["suppression"]["rule_suppression"] == 1
+
+    # Reopened by hand, a finding is on its own again. Removing a suppression reopens what
+    # it still covers, unless another one takes it in.
+    client.post("/findings/8/reopen", auth=AUTH)
+    assert _findings()[8].rule_suppression_id is None
+    assert client.post("/rule-suppressions/99/remove", auth=AUTH).status_code == 404
+    r = client.post("/rule-suppressions/1/remove", auth=AUTH)
+    assert r.status_code == 303 and r.headers["location"] == "/targets/1#rules"
+    found = _findings()
+    assert (found[7].status, found[7].rule_suppression_id) == ("suppressed", 2)  # web/
+    assert (found[8].status, found[9].rule_suppression_id) == ("open", 2)
+    client.post("/rule-suppressions/2/remove", auth=AUTH)
+    found = _findings()
+    assert [(found[i].status, found[i].rule_suppression_id) for i in (7, 9)] == [("open", None)] * 2
+    assert 'id="rules"' not in client.get("/targets/1", auth=AUTH).text
+
+    # Removing the target removes its rule suppressions.
+    client.post("/findings/7/suppress-rule", data=form, auth=AUTH)
+    client.post("/targets/1/delete", auth=AUTH)
+    with db.SessionLocal() as s:
+        assert s.query(Target).count() == 1 and s.query(RuleSuppression).count() == 0

@@ -55,6 +55,7 @@ from scentry.models import (
     HassSync,
     LogEntry,
     NotifyState,
+    RuleSuppression,
     Scan,
     Target,
     utcnow,
@@ -264,15 +265,26 @@ def suppression_problem(reason: str, days: int) -> str | None:
     return None
 
 
+def suppression_until(days: int) -> datetime.datetime | None:
+    """0 days: for good; otherwise back for review when the time is up."""
+    return utcnow() + datetime.timedelta(days=min(days, 3650)) if days > 0 else None
+
+
 def suppress_findings(chosen: list[tuple[Finding, str]], reason: str, days: int,
                       user: str) -> None:
-    """Suppress each finding with its note. 0 days: for good; otherwise each comes back
-    for review when the time is up."""
-    until = utcnow() + datetime.timedelta(days=min(days, 3650)) if days > 0 else None
+    """Suppress each finding with its note, on its own."""
+    until = suppression_until(days)
     for finding, note in chosen:
         finding.status, finding.suppressed_by, finding.suppressed_until = (
             "suppressed", user, until)  # fmt: skip
         finding.suppression_reason, finding.suppression_note = reason, note.strip()[:2000]
+        finding.rule_suppression_id = None
+
+
+def folder_of(path: str) -> str:
+    """The pattern a rule suppression starts from: the file's folder, or the file itself
+    when it's at the top of the repository."""
+    return path.rsplit("/", 1)[0] + "/" if "/" in path else path
 
 
 def bucket(score: int | None) -> str:
@@ -886,6 +898,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         found = session.scalars(
             select(Finding).where(Finding.target_id == target.id, Finding.status == status)
         ).all()
+        # Rules suppressed in some files, and how many findings each keeps suppressed.
+        covered = dict(session.execute(
+            select(Finding.rule_suppression_id, func.count())
+            .where(Finding.target_id == target.id, Finding.status == "suppressed",
+                   Finding.rule_suppression_id.is_not(None))
+            .group_by(Finding.rule_suppression_id)).all())  # fmt: skip
         why = None
         if target.profile == "owned":
             open_now = found if status == "open" else session.scalars(
@@ -940,6 +958,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     tick_all=f"?{urlencode([*unticked, ('select', 'all')])}#findings",
                     untick=f"?{urlencode(unticked)}#findings",
                     why_table=why_table, scans=scans, counts=counts, notes=notes,
+                    rules={r.id: r for r in target.rule_suppressions}, covered=covered,
                     ai_on=ai.enabled(session),
                     notifier=notifier, defaults=(notifier.defaults if notifier else None) or {},
                     severities=SEVERITIES[:-1], status=status, progress=live, why=why,
@@ -967,8 +986,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         alike = len(_alike(session, finding)) if finding.status == "open" else 0
         seen_in = (session.get(Scan, finding.last_seen_scan_id)
                    if finding.last_seen_scan_id else None)  # fmt: skip
+        by_rule = (session.get(RuleSuppression, finding.rule_suppression_id)
+                   if finding.rule_suppression_id else None)  # fmt: skip
         return page(request, session, "finding.html", tab=category(finding.target),
-                    f=finding, target=finding.target, note=note, alike=alike,
+                    f=finding, target=finding.target, note=note, alike=alike, by_rule=by_rule,
                     twin=session.get(Finding, finding.same_as) if finding.same_as else None,
                     seen_in=seen_in, **explained(finding, seen_in, now),
                     ai_on=ai.enabled(session),
@@ -1242,11 +1263,116 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/findings/{finding_id}/reopen")
     def reopen(finding_id: int, session: Session = session_dep, user: str = user_dep):
+        """Open again, on its own: a rule suppression that covered it leaves it open."""
         finding = session.get(Finding, finding_id)
         if finding is None:
             raise HTTPException(404)
         finding.status, finding.suppressed_until, finding.fixed_at = "open", None, None
+        finding.rule_suppression_id = None
         session.commit()
         return RedirectResponse(f"/findings/{finding.id}", 303)
+
+    # --- a rule suppressed in some files ---------------------------------------------
+
+    def _with_file(session: Session, finding_id: int) -> Finding:
+        finding = session.get(Finding, finding_id)
+        if finding is None:
+            raise HTTPException(404)
+        if not finding.file:
+            raise HTTPException(400, "This finding names no file to go by.")
+        return finding
+
+    def _rule_matches(session: Session, finding: Finding, pattern: str) -> list[Finding]:
+        """The target's open findings from this finding's scanner and rule, in files that
+        match the pattern."""
+        found = session.scalars(select(Finding).where(
+            Finding.target_id == finding.target_id, Finding.status == "open",
+            Finding.scanner == finding.scanner, Finding.rule_id == finding.rule_id))  # fmt: skip
+        return sorted((f for f in found if findings.path_matches(pattern, f.file)),
+                      key=lambda f: (f.file or "", f.line or 0))  # fmt: skip
+
+    def _pattern_problem(session: Session, finding: Finding, tidy: str | None) -> str | None:
+        if tidy is None:
+            return ("Name a folder or some files: tests/, say, or src/**/*.html. A rule "
+                    "can't be suppressed in every file of a repository.")
+        if not findings.path_matches(tidy, finding.file):
+            return f"That doesn't take in this finding's own file, {finding.file}."
+        now = utcnow()
+        if any(r.scanner == finding.scanner and r.rule_id == finding.rule_id
+               and r.pattern == tidy and r.active(now)
+               for r in finding.target.rule_suppressions):  # fmt: skip
+            return f"This rule is already suppressed in files matching {tidy}."
+        return None
+
+    def _rule_page(request: Request, session: Session, finding: Finding, pattern: str,
+                   user: str, *, reason: str = "", note: str = "",
+                   days: int = DEFAULT_SUPPRESSION_DAYS, problem: str | None = None):  # fmt: skip
+        tidy = findings.path_pattern(pattern)
+        wrong = _pattern_problem(session, finding, tidy)
+        matched = _rule_matches(session, finding, tidy) if tidy else []
+        return page(request, session, "suppress_rule.html", tab=category(finding.target),
+                    target=finding.target, f=finding, pattern=pattern, tidy=tidy,
+                    wrong=wrong, problem=problem, matched=matched, reason=reason, note=note,
+                    days=days, user=user)  # fmt: skip
+
+    @app.get("/findings/{finding_id}/suppress-rule")
+    def suppress_rule_page(request: Request, finding_id: int, pattern: str | None = None,
+                           session: Session = session_dep, user: str = user_dep):  # fmt: skip
+        """Suppressing a finding's rule in a folder or some files, now and in later scans:
+        the pattern is checked, showing the open findings it takes in, before anything is
+        suppressed."""
+        finding = _with_file(session, finding_id)
+        written = folder_of(finding.file or "") if pattern is None else pattern
+        return _rule_page(request, session, finding, written, user)
+
+    @app.post("/findings/{finding_id}/suppress-rule")
+    def suppress_rule(request: Request, finding_id: int, pattern: str = Form(""),
+                      reason: str = Form(""), note: str = Form(""),
+                      days: int = Form(DEFAULT_SUPPRESSION_DAYS),
+                      session: Session = session_dep, user: str = user_dep):  # fmt: skip
+        finding = _with_file(session, finding_id)
+        tidy = findings.path_pattern(pattern)
+        problem = (_pattern_problem(session, finding, tidy) or suppression_problem(reason, days)
+                   or (None if note.strip() else "Say why: a suppression needs a note."))
+        if problem:  # the page again, with what was written; nothing is suppressed
+            response = _rule_page(request, session, finding, pattern, user, reason=reason,
+                                  note=note, days=days, problem=problem)  # fmt: skip
+            response.status_code = 400
+            return response
+        rule = RuleSuppression(target_id=finding.target_id, scanner=finding.scanner,
+                               rule_id=finding.rule_id, pattern=tidy, reason=reason,
+                               note=note.strip()[:2000], created_by=user,
+                               until=suppression_until(days))  # fmt: skip
+        session.add(rule)
+        session.flush()
+        for f in _rule_matches(session, finding, tidy or ""):
+            findings.suppress_by_rule(f, rule)
+        session.commit()
+        return RedirectResponse(f"/targets/{finding.target_id}#rules", 303)
+
+    @app.post("/rule-suppressions/{rule_id}/remove")
+    def remove_rule_suppression(rule_id: int, session: Session = session_dep,
+                                user: str = user_dep):  # fmt: skip
+        """Stop suppressing a rule in those files: the findings it suppressed open again
+        (unless another of the target's rule suppressions takes them in), and the next
+        scans leave new ones open."""
+        rule = session.get(RuleSuppression, rule_id)
+        if rule is None:
+            raise HTTPException(404)
+        now = utcnow()
+        others = session.scalars(select(RuleSuppression).where(
+            RuleSuppression.target_id == rule.target_id, RuleSuppression.id != rule.id)
+            .order_by(RuleSuppression.id)).all()  # fmt: skip
+        for f in session.scalars(select(Finding).where(Finding.rule_suppression_id == rule.id)):
+            if f.status != "suppressed":
+                f.rule_suppression_id = None
+            elif other := next((r for r in others if findings.covers(r, f, now)), None):
+                findings.suppress_by_rule(f, other)
+            else:
+                f.status, f.suppressed_until, f.rule_suppression_id = "open", None, None
+        target_id = rule.target_id
+        session.delete(rule)
+        session.commit()
+        return RedirectResponse(f"/targets/{target_id}#rules", 303)
 
     return app

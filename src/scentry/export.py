@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from scentry import __version__
 from scentry.findings import issues
-from scentry.models import SEVERITY_RANK, AiNote, Finding, Scan, Target, utcnow
+from scentry.models import SEVERITY_RANK, AiNote, Finding, RuleSuppression, Scan, Target, utcnow
 
 FORMAT = 1
 SCANS_PER_TARGET = 20
@@ -66,8 +66,24 @@ def finding_dict(f: Finding) -> dict[str, Any]:
             "note": f.suppression_note,
             "by": f.suppressed_by,
             "until": _iso(f.suppressed_until),
+            "rule_suppression": f.rule_suppression_id,  # one of the target's, or null
         },
     }  # fmt: skip
+
+
+def rule_suppression_dict(r: RuleSuppression, now: datetime.datetime) -> dict[str, Any]:
+    return {
+        "id": r.id,
+        "scanner": r.scanner,
+        "rule_id": r.rule_id,
+        "pattern": r.pattern,  # a folder ends in /; * within a name, ** across folders
+        "reason": r.reason,
+        "note": r.note,
+        "by": r.created_by,
+        "created_at": _iso(r.created_at),
+        "until": _iso(r.until),
+        "active": r.active(now),
+    }
 
 
 def scan_dict(s: Scan, *, report: bool = True) -> dict[str, Any]:
@@ -137,6 +153,9 @@ def target_dict(session: Session, target: Target, *, scans: int = SCANS_PER_TARG
             for i in issues([f for f in found if f.status == "open"])
         ] if target.profile == "owned" else None,
         "findings": [finding_dict(f) for f in found],
+        # Rules suppressed in some files: their findings now and the ones scans find later.
+        "rule_suppressions": [rule_suppression_dict(r, utcnow())
+                              for r in target.rule_suppressions],  # fmt: skip
         "scans": [scan_dict(s, report=reports) for s in target.scans[:scans]],
     }
 

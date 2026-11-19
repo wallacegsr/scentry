@@ -103,6 +103,15 @@ and **tick all shown**), then **Suppress ticked…**: one reason and review date
 of them, and one note for all, or a note of its own for any of them. A finding's own
 **Suppress** can also take the target's other open findings from the same rule with it.
 
+Those are suppressed one by one: a new test or form, or an edit to the lines a finding
+quotes, brings the same false positive back as a new finding. For that, a finding's
+**Suppress** also offers **suppress this rule in a folder**: one rule, in the files that
+match a pattern (`tests/`, or `src/**/*.html`), never in every file. The page shows the
+open findings the pattern takes in before anything is suppressed; after that, each
+finding of that rule a scan opens in those files is suppressed as it's found, new code
+included, until the review date. The target's page lists these, with how many findings
+each covers, and **Remove** opens them again. A finding reopened by hand stays open.
+
 A finding's page puts it in plain words first. For a Home Assistant finding they're
 Barkley's: what it means and whether to worry. For a vulnerable package: whether a
 release fixes it, how far behind the newest release it is (and whether that one is years

@@ -144,7 +144,8 @@
       <div class="sub">{% if r %}{{ f.title }} · {% endif %}{{ f.scanner }}: {{ f.rule_id }}</div>
       {% if f.file %}<div class="sub mono">{{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}</div>{% endif %}
       {% if f.message %}<p class="small fc-text">{{ f.message|truncate(220) }}</p>{% endif %}
-      {% if f.status == "suppressed" %}<p class="small muted">{{ (f.suppression_reason or "")|replace("_", " ")|capitalize }}: {{ f.suppression_note }}</p>{% endif %}
+      {% if f.status == "suppressed" %}<p class="small muted">{{ (f.suppression_reason or "")|replace("_", " ")|capitalize }}: {{ f.suppression_note }}
+        {%- if rules.get(f.rule_suppression_id) %} · the rule, in <span class="mono">{{ rules[f.rule_suppression_id].pattern }}</span>{% endif %}</p>{% endif %}
       <div class="fc-foot small muted">first seen {{ since(f.first_seen_at, now) }} · last seen {{ since(f.last_seen_at, now) }}</div>
     </li>
     {% endfor %}
@@ -174,7 +175,8 @@
           <div class="sub">{{ f.rule_id }}
             {%- if f.same_as is not none %} · <span class="pill">same vulnerability</span>{% endif %}
             {%- if notes.get(f.id) and notes[f.id].status == "done" %} · <span class="pill accent">{{ icon("spark", 12) }} explained</span>{% endif %}
-            {%- if f.status == "suppressed" %} · {{ (f.suppression_reason or "")|replace("_", " ") }}: {{ f.suppression_note }}{% endif %}</div></td>
+            {%- if f.status == "suppressed" %} · {{ (f.suppression_reason or "")|replace("_", " ") }}: {{ f.suppression_note }}
+            {%- if rules.get(f.rule_suppression_id) %} · the rule, in <span class="mono">{{ rules[f.rule_suppression_id].pattern }}</span>{% endif %}{% endif %}</div></td>
         <td class="opt small mono">{% if f.file %}{{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}{% else %}<span class="muted">–</span>{% endif %}</td>
         <td class="opt small">{{ f.scanner }}</td>
         <td class="opt small">{{ since(f.first_seen_at, now) }}</td>
@@ -188,6 +190,32 @@
   </div>
   {% endif %}
 </section>
+
+{% if rules %}
+<section class="card" id="rules">
+  <div class="card-head"><h2>Rules suppressed in some files</h2>
+    <span class="muted small">Each takes in its findings there now and the ones later scans find, new code included</span></div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Rule</th><th>Files</th><th>Why</th><th class="opt">Until</th><th class="num">Findings</th><th><span class="sr-only">Remove</span></th></tr></thead>
+    <tbody>
+    {% for r in rules.values() %}
+      <tr>
+        <td><div class="name mono small">{{ r.rule_id }}</div><div class="sub">{{ r.scanner }}</div></td>
+        <td class="mono small">{{ r.pattern }}</td>
+        <td class="small">{{ r.reason|replace("_", " ")|capitalize }}: {{ r.note }}
+          <div class="sub">by {{ r.created_by }}, {{ since(r.created_at, now) }}</div></td>
+        <td class="opt small">{% if not r.active(now) %}<span class="pill warn">expired</span>{% elif r.until %}{{ when(r.until) }}{% else %}permanent{% endif %}</td>
+        <td class="num small"><a href="?status=suppressed&amp;q={{ r.rule_id|urlencode }}#findings">{{ covered.get(r.id, 0) }}</a></td>
+        <td><form method="post" action="/rule-suppressions/{{ r.id }}/remove">
+          <button class="ghost small" title="Its findings open again, and later scans leave new ones open">Remove</button></form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
 
 {{ sections(app, app_scan) }}
 

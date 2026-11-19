@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from scentry import acquire, db, findings, pipeline, sarif, worker
 from scentry.config import Settings
-from scentry.models import Finding, Scan, Target, utcnow
+from scentry.models import Finding, RuleSuppression, Scan, Target, utcnow
 from scentry.scanners.barkley import Barkley, is_ha_repo
 from scentry.scanners.base import RawFinding, ScanContext, Scanner, ScannerRun
 
@@ -519,3 +519,74 @@ def test_barkley_names_its_checks_that_didnt_finish(session, settings, monkeypat
     assert ("<strong>barkley</strong> › guarddog (x.whl: No usable temporary directory "
             "found in [&#39;/tmp&#39;])") in page
     assert '<span class="pill warn">incomplete</span>' in page
+
+
+# --- a rule suppressed in some files ----------------------------------------------------
+
+
+def test_path_patterns():
+    tidy = findings.path_pattern
+    assert tidy(" ./tests/ ") == "tests/" and tidy("/a.py") == "a.py"
+    assert tidy("src" + chr(92) + "web" + chr(92)) == "src/web/"  # written the Windows way
+    for blanket in ("", "  ", "*", "**", "**/", "**/*", "/", "./", ".", "a//b", "x" * 501):
+        assert tidy(blanket) is None, blanket
+
+    def matches(pattern, *paths):
+        return [findings.path_matches(pattern, p) for p in paths]
+
+    # A folder holds what's under it, at any depth; nothing outside it.
+    assert matches("tests/", "tests/a.py", "tests/x/y.py", "src/tests/a.py", "testsx/a.py",
+                   "tests") == [True, True, False, False, False]  # fmt: skip
+    assert matches("**/tests/", "tests/a.py", "src/tests/a.py") == [True, True]
+    # * stays within a name, ** crosses folders (or none).
+    assert matches("src/**/*.html", "src/a.html", "src/x/y/a.html", "src/a.htm",
+                   "x/src/a.html") == [True, True, False, False]  # fmt: skip
+    assert matches("*.md", "README.md", "docs/a.md") == [True, False]
+    assert matches("a?.py", "a1.py", "a/.py") == [True, False]
+    assert matches("a+b(c).py", "a+b(c).py", "aab(c).py") == [True, False]  # not a regex
+    assert matches("tests/a.py", "tests/a.py", "tests/a.pyc") == [True, False]
+    assert findings.path_matches("tests/", None) is False
+
+
+def test_a_rule_suppression_takes_in_what_scans_open_there(session):
+    target = Target(name="repo", profile="owned", source="/nowhere")
+    session.add(target)
+    session.flush()
+
+    def scan_with(*found):
+        scan = Scan(target_id=target.id, status="done")
+        session.add(scan)
+        session.flush()
+        findings.reconcile(session, target, scan, [ScannerRun("fake", "ok", findings=[
+            raw(rule, file, evidence=f"x = {file}") for rule, file in found])])  # fmt: skip
+        session.commit()
+        return {(f.rule_id, f.file): f for f in session.scalars(select(Finding))}
+
+    scan_with(("r1", "tests/a.py"), ("r1", "tests/old.py"))
+    scan_with(("r1", "tests/a.py"))  # tests/old.py is fixed
+    later = utcnow() + datetime.timedelta(days=30)
+    rule = RuleSuppression(target_id=target.id, scanner="fake", rule_id="r1", pattern="tests/",
+                           reason="false_positive", note="test fixtures", created_by="admin",
+                           until=later)  # fmt: skip
+    session.add(rule)
+    session.commit()
+
+    now = scan_with(("r1", "tests/a.py"), ("r1", "tests/old.py"), ("r1", "tests/b/c.py"),
+                    ("r1", "src/a.py"), ("r2", "tests/d.py"))  # fmt: skip
+    for key in (("r1", "tests/old.py"), ("r1", "tests/b/c.py")):  # back, and new
+        f = now[key]
+        assert (f.status, f.rule_suppression_id, f.suppression_reason, f.suppression_note,
+                f.suppressed_by, f.suppressed_until) == (
+            "suppressed", rule.id, "false_positive", "test fixtures", "admin", later)  # fmt: skip
+    # Open before the scan (reopened by hand, say): left open. Another file, another rule.
+    assert [now[k].status for k in (("r1", "tests/a.py"), ("r1", "src/a.py"),
+                                    ("r2", "tests/d.py"))] == ["open"] * 3  # fmt: skip
+
+    # An expired rule suppression takes in nothing new; its findings come back for review.
+    rule.until = utcnow() - datetime.timedelta(minutes=1)
+    for key in (("r1", "tests/old.py"), ("r1", "tests/b/c.py")):
+        now[key].suppressed_until = rule.until
+    session.commit()
+    now = scan_with(("r1", "tests/old.py"), ("r1", "tests/b/c.py"), ("r1", "tests/e.py"))
+    for key in (("r1", "tests/old.py"), ("r1", "tests/b/c.py"), ("r1", "tests/e.py")):
+        assert (now[key].status, now[key].rule_suppression_id) == ("open", None)
