@@ -8,3 +8,6 @@ build/
 .pytest_cache/
 .ruff_cache/
 *.db
+
+# Benchmarks: scanned projects' findings, labelled by hand. Kept here, never published.
+/bench/

@@ -19,9 +19,16 @@ def main() -> None:
     new = sub.add_parser("new-migration", help="development: write a migration for model "
                                                "changes")  # fmt: skip
     new.add_argument("message")
+    bench = sub.add_parser("bench", add_help=False,  # its own --help: scentry bench --help
+                           help="development: a benchmark of findings labelled by hand")
+    bench.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
-    if args.command == "migrate":
+    if args.command == "bench":
+        from scentry import bench as benchmark
+
+        benchmark.main(args.args)
+    elif args.command == "migrate":
         from scentry import db
         from scentry.config import get_settings
 
