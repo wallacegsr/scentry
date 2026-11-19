@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, result, grade, sevcounts, since, th, search, modal_head, add_target_fields, export_button, export_dialog %}
+{% from "_macros.html" import icon, result, grade, sevcounts, since, th, search, modal_head, add_target_fields, export_button, export_dialog, look_switch, sort_by %}
 {% block title %}{{ tabs[tab] }} · Scentry{% endblock %}
 {% block main %}
 {% set sync = state.sync %}
@@ -60,7 +60,38 @@
     <h2>{{ table.total }} {{ {"ha": "installed", "code": "repositor" ~ ("ies" if table.total != 1 else "y"), "others": "checked"}[tab] }}
       {%- if busy %} <span class="pill live-pill">{{ busy }} scanning</span>{% endif %}</h2>
     {{ search(table, "Search by name, repository or version", "target") }}
+    {{ look_switch(look, looks) }}
   </div>
+  {% if look == "cards" %}
+  {% set keys = [("name", "Name"), ("score", "Result"), ("open", "Open findings"), ("last", "Last scan")] %}
+  {% if tab == "ha" %}{% set keys = keys + [("update", "Update offered")] %}{% endif %}
+  {{ sort_by(table, keys) }}
+  {% if table.rows %}
+  <div class="app-cards">
+    {% for row in table.rows %}{% set t = row.target %}{% set c = cards[t.id] %}
+    <article class="app-card{{ ' look' if c.look }}">
+      <div class="app-top">
+        <div class="app-id"><a class="row-link name" href="/targets/{{ t.id }}">{{ t.name }}</a>
+          <div class="sub">{% if tab == "ha" %}{{ (t.hacs_kind or "integration")|capitalize }}{% if t.installed_version %} · {{ t.installed_version }}{% endif %}
+            {%- else %}{{ t.source }}{% if t.ref %} @ {{ t.ref }}{% endif %}{% endif %}
+            {%- if t.hacs_removed_at %} · uninstalled {{ t.hacs_removed_at|ago(now) }}{% endif %}</div></div>
+        <div class="app-result">{{ result(row.graded) }}</div>
+      </div>
+      <p class="app-sentence">{% if row.busy %}<span class="pill live-pill">{{ row.busy[0].status }}</span> {% endif %}{{ c.sentence }}</p>
+      {% if c.chips %}<div class="tags">{% for cls, text in c.chips %}<span class="tag {{ cls }}">{{ text }}</span>{% endfor %}</div>{% endif %}
+      <div class="app-foot small">
+        {{ sevcounts(row.sev) }}
+        {% if tab == "ha" and t.update_offered %}<span>Update <span class="mono">{{ t.available_version }}</span>
+          {%- if row.offered and row.offered.status == "done" %} {{ grade(row.offered) }}{% elif not row.offered %} <span class="muted">not scanned</span>{% endif %}</span>{% endif %}
+        <span class="muted">{% if row.failed %}<span class="pill bad">failed</span> {% endif %}{{ since(row.finished.finished_at if row.finished else none, now) }}</span>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card-body"><p class="empty">{% if table.q %}Nothing matches “{{ table.q }}”.{% else %}Nothing here yet.{% endif %}</p></div>
+  {% endif %}
+  {% else %}
   <div class="table-wrap">
   <table>
     <thead><tr>
@@ -109,6 +140,7 @@
     </tbody>
   </table>
   </div>
+  {% endif %}
 </section>
 
 {% if tab == "ha" %}

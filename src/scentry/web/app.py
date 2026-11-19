@@ -55,13 +55,56 @@ from scentry.models import (
     Target,
     utcnow,
 )
-from scentry.web.tables import view
+from scentry.web import report as barkley_report
+from scentry.web.tables import ONCE, view
 
 HERE = Path(__file__).parent
 CSP = (
     "default-src 'none'; style-src 'self'; img-src 'self'; "
     "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 )
+
+
+LOOKS = ("cards", "table")
+
+
+def chosen_look(request: Request, what: str) -> tuple[str, bool]:
+    """Cards or a table for a list ("targets" or "findings"): what the link asked for, else
+    what was last chosen (a cookie), else a table. True when the link asked."""
+    asked = request.query_params.get("view")
+    if asked in LOOKS:
+        return asked, True
+    saved = request.cookies.get(f"scentry_{what}_view")
+    return (saved if saved in LOOKS else "table"), False
+
+
+def remember_look(response: Response, request: Request, what: str, look: str) -> Response:
+    response.set_cookie(f"scentry_{what}_view", look, max_age=365 * 86400, path="/",
+                        samesite="lax", httponly=True,
+                        secure=request.url.scheme == "https")  # fmt: skip
+    return response
+
+
+def look_links(request: Request, anchor: str) -> dict[str, str]:
+    """The same page as cards or as a table, sorted and searched as it is."""
+    keep = [(k, v) for k, v in request.query_params.multi_items()
+            if k != "view" and k not in ONCE]  # fmt: skip
+    return {look: f"?{urlencode([*keep, ('view', look)])}#{anchor}" for look in LOOKS}
+
+
+def app_parts(scan: Scan | None, name: str) -> dict | None:
+    """What Barkley's report of one scan says about the app beyond its findings, for
+    _app.html: where its data can go, what it can do inside Home Assistant, the
+    developer's security habits. None without a report."""
+    rep = scan.report if scan is not None and isinstance(scan.report, dict) else None
+    if not rep or not isinstance(rep.get("graph"), dict):
+        return None
+    plain = barkley_report.words(scan)
+    return {"flow": barkley_report.flow(rep, plain, name),
+            "connects": barkley_report.connection_sentence(rep, plain),
+            "hosts": barkley_report.hosts(rep), "ports": barkley_report.ports(rep, plain),
+            "privacy": plain.get("privacy") or [], "can_do": plain.get("can_do") or [],
+            "habits": barkley_report.habits(rep)}  # fmt: skip
 
 
 def _graded(scans: list[Scan], version: str | None) -> Scan | None:
@@ -531,11 +574,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if error and error not in acquire.FORM_ERRORS:
             error = "That target couldn't be added."  # not text of ours: don't show it
         add_open = bool(error) or request.query_params.get("add") == "1"
-        return page(request, session, "listing.html", tab=tab, table=table, error=error,
-                    add_open=add_open, add_source=request.query_params.get("source", ""),
-                    profile=TAB_PROFILE.get(tab), state=state,
-                    sync_counts=hass_sync.installed_counts(session) if tab == "ha" else {},
-                    busy=sum(1 for r in rows if r["busy"]), now=now, user=user)  # fmt: skip
+        look, asked = chosen_look(request, "targets")
+        cards = target_cards(session, table.rows) if look == "cards" else {}
+        response = page(request, session, "listing.html", tab=tab, table=table, error=error,
+                        add_open=add_open, add_source=request.query_params.get("source", ""),
+                        profile=TAB_PROFILE.get(tab), state=state,
+                        sync_counts=hass_sync.installed_counts(session) if tab == "ha" else {},
+                        busy=sum(1 for r in rows if r["busy"]), look=look, cards=cards,
+                        looks=look_links(request, "targets"), now=now, user=user)  # fmt: skip
+        return remember_look(response, request, "targets", look) if asked else response
+
+    def target_cards(session: Session, rows: list[dict]) -> dict[int, dict]:
+        """What each target's card says: a sentence or two and a few chips, from its open
+        findings and Barkley's report and plain words for the scan its grade is from."""
+        ids = [r["target"].id for r in rows]
+        open_by: dict[int, list[Finding]] = {}
+        for f in session.scalars(select(Finding).where(Finding.status == "open",
+                                                       Finding.target_id.in_(ids))):  # fmt: skip
+            open_by.setdefault(f.target_id, []).append(f)
+        cards = {}
+        for row in rows:
+            t, scan = row["target"], row["graded"]
+            mine, plain = open_by.get(t.id, []), barkley_report.words(scan)
+            cards[t.id] = {
+                "sentence": barkley_report.card_sentence(t.profile, scan, mine, plain),
+                "chips": barkley_report.card_chips(scan, mine, plain),
+                "look": bool(attention(row)),
+            }  # fmt: skip
+        return cards
 
     @app.get("/system")
     def system(request: Request, session: Session = session_dep, user: str = user_dep):
@@ -790,7 +856,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         here = urlencode([(k, v) for k, v in params.multi_items() if k != "refresh"])
         # Ticking every open finding the table shows (after a search, say): no scripts.
         unticked = [(k, v) for k, v in params.multi_items() if k not in ("select", "refresh")]
-        return page(request, session, "target.html", tab=tab, target=target, table=table,
+        graded = _graded(target.scans, target.installed_version if tab == "ha" else None)
+        shown = next((s for s in (graded, *target.scans)
+                      if s is not None and s.status == "done" and s.report), None)  # fmt: skip
+        look, asked = chosen_look(request, "findings")
+        plain_by = {s.id: barkley_report.words(s) for s in target.scans if s.plain}
+        said = {f.id: r for f in table.rows if f.scanner == "barkley" and (
+            r := barkley_report.rule_words(plain_by.get(f.last_seen_scan_id, {}), f.rule_id))}
+        response = page(request, session, "target.html", tab=tab, target=target, table=table,
+                    look=look, looks=look_links(request, "findings"), said=said,
+                    app=app_parts(shown, target.name), app_scan=shown,
                     picking=status == "open", ticked=params.get("select") == "all",
                     tick_all=f"?{urlencode([*unticked, ('select', 'all')])}#findings",
                     untick=f"?{urlencode(unticked)}#findings",
@@ -800,13 +875,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     severities=SEVERITIES[:-1], status=status, progress=live, why=why,
                     deducted=sum(i.deduction for i in why or []),
                     latest=next((s for s in target.scans if s.status == "done"), None),
-                    graded=_graded(target.scans,
-                                   target.installed_version if tab == "ha" else None),
+                    graded=graded,
                     refresh=bool(live or asking) and refresh != "0",
                     paused=bool(live or asking) and refresh == "0",
                     refresh_what=None if live else answering(session),
                     refresh_seconds=REFRESH_SECONDS, here=f"?{here}" if here else "?",
                     user=user)  # fmt: skip
+        return remember_look(response, request, "findings", look) if asked else response
 
     @app.get("/findings/{finding_id}")
     def finding_page(request: Request, finding_id: int, refresh: str = "1",
@@ -820,16 +895,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         note = ai.note_for(session, "finding", finding.id)
         asking = bool(note and note.status in ai.PENDING)
         alike = len(_alike(session, finding)) if finding.status == "open" else 0
+        seen_in = (session.get(Scan, finding.last_seen_scan_id)
+                   if finding.last_seen_scan_id else None)  # fmt: skip
         return page(request, session, "finding.html", tab=category(finding.target),
                     f=finding, target=finding.target, note=note, alike=alike,
                     twin=session.get(Finding, finding.same_as) if finding.same_as else None,
-                    seen_in=session.get(Scan, finding.last_seen_scan_id)
-                    if finding.last_seen_scan_id else None,
+                    seen_in=seen_in, **explained(finding, seen_in, now),
                     ai_on=ai.enabled(session),
                     ai_limit=ai.limit_reached(session.get(AiState, 1), now),
                     refresh=asking and refresh != "0", paused=asking and refresh == "0",
                     refresh_what=answering(session), refresh_seconds=REFRESH_SECONDS,
                     here="?", now=now, user=user)  # fmt: skip
+
+    def explained(finding: Finding, seen_in: Scan | None, now: datetime.datetime) -> dict:
+        """A finding in plain words, beyond its scanner's message: what Barkley's panel says
+        about its rule, the vulnerable package's fix and newer versions, the advisories,
+        and what you can do."""
+        owned = finding.target.profile == "owned"
+        rule = (barkley_report.rule_words(barkley_report.words(seen_in), finding.rule_id)
+                if finding.scanner == "barkley" else None)  # fmt: skip
+        found = barkley_report.report_finding(seen_in.report if seen_in else None, finding)
+        pkg = barkley_report.package((found or {}).get("dependency"), owned, now.date())
+        bugs = pkg.bugs if pkg and pkg.bugs else barkley_report.bugs_of(finding.vulns)
+        doc = (finding.details or {}).get("url")
+        if doc and doc.lower() in {b.url.lower() for b in bugs}:
+            doc = None  # osv-scanner's page for an advisory is the bug's own link
+        return {"rule": rule, "pkg": pkg, "bugs": bugs,
+                "action": barkley_report.package_action(pkg, owned) if pkg else None,
+                "about": (finding.details or {}).get("about"), "doc": doc}
 
     def shared(session: Session, finding_id: int, explain: str) -> dict:
         """A finding as Markdown, with its AI explanation if one was asked for and there
@@ -945,6 +1038,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     base=session.get(Scan, scan.diff_from) if scan.diff_from else None,
                     rechecked=session.get(Scan, scan.recheck_of) if scan.recheck_of else None,
                     later=later, groups=DIFF_GROUPS, note=note, ai_on=ai.enabled(session),
+                    app=app_parts(scan if scan.status == "done" else None, scan.target.name),
                     ai_limit=ai.limit_reached(session.get(AiState, 1), now),
                     refresh=bool(live or asking) and refresh != "0",
                     paused=bool(live or asking) and refresh == "0",

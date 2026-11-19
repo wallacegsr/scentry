@@ -98,6 +98,24 @@ def _line_from(tree: Path | None, file: str | None, line: int | None) -> str:
     return ""
 
 
+def _same(a: str, b: str) -> bool:
+    return " ".join(a.split()).rstrip(".").lower() == " ".join(b.split()).rstrip(".").lower()
+
+
+def rule_details(rule: dict, title: str, message: str) -> dict | None:
+    """What the tool says about a rule beyond the result's own message: its longer
+    description (when it adds something) and its documentation, if that is an https link."""
+    about = _text(rule.get("fullDescription")) or _text(rule.get("help"))
+    if about and any(_same(about, x) for x in (title, message) if x):
+        about = ""
+    url = rule.get("helpUri")
+    url = clean(url, 500) if isinstance(url, str) and url.startswith("https://") else ""
+    if " " in url or "\\" in url:
+        url = ""
+    out = {k: v for k, v in (("about", clean(about, 1500)), ("url", url)) if v}
+    return out or None
+
+
 def parse(
     doc: dict, scanner: str, tree: Path | None = None, *, floor: str | None = None
 ) -> list[RawFinding]:
@@ -133,6 +151,7 @@ def parse(
             aliases = aliases if isinstance(aliases, list) else []
             pkg = _PACKAGE.search(message)
             vuln = vulns([rule_id, *aliases], pkg[1] if pkg else None)
+            details = rule_details(rule, title, message)
 
             out.append(
                 RawFinding(
@@ -146,6 +165,7 @@ def parse(
                     evidence=clean(snippet or _line_from(tree, file, line), 500) or None,
                     fingerprint_hint=hint,
                     vulns=vuln,
+                    details=details,
                 )
             )
     return out

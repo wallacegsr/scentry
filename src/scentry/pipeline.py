@@ -114,9 +114,13 @@ def defer_github_scans(session: Session, until) -> None:
 
 
 def _score(session: Session, scan: Scan, runs: list[ScannerRun]) -> None:
+    barkley = next((r for r in runs if r.name == "barkley" and r.state == "ok"), None)
+    if barkley is not None:  # its report, also of my code when that is an integration or card
+        scan.report = barkley.extra.get("report")
+        if barkley.extra.get("plain") is not None:
+            scan.plain = barkley.extra["plain"]
     if scan.target.profile == "ha":
         # Barkley's score and verdict stand as they are; nothing here adjusts them.
-        barkley = next((r for r in runs if r.name == "barkley" and r.state == "ok"), None)
         if barkley is None:
             scan.complete = False
             return
@@ -125,7 +129,6 @@ def _score(session: Session, scan: Scan, runs: list[ScannerRun]) -> None:
         scan.complete = scan.complete and bool(extra.get("complete"))
         scan.commit_sha = extra.get("commit_sha") or scan.commit_sha
         scan.ref = scan.ref or extra.get("ref")
-        scan.report = extra.get("report")
         scan.barkley_id = extra.get("barkley_id")
         return
     open_findings = session.scalars(

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, choice, grade, result, sev, since, when, th, search, modal_head, export_button, export_dialog %}
+{% from "_macros.html" import icon, choice, grade, result, sev, since, when, th, search, modal_head, export_button, export_dialog, look_switch, sort_by %}
+{% from "_app.html" import sections %}
 {% block title %}{{ target.name }} · Scentry{% endblock %}
 {% block main %}
 <nav class="crumbs"><a href="/{{ tab }}">{{ tabs[tab] }}</a><span class="sep">›</span><span>{{ target.name }}</span></nav>
@@ -105,6 +106,7 @@
         {% endfor %}
       </nav></div>
     {{ search(table, "Search findings", "finding") }}
+    {{ look_switch(look, looks) }}
   </div>
   {% set picking = picking and table.rows %}
   {% if picking %}
@@ -117,6 +119,33 @@
       Search first to tick one kind: a rule's name, a file, a scanner.</span>
   </form>
   {% endif %}
+  {% if look == "cards" %}
+  {{ sort_by(table, [("severity", "Severity"), ("title", "Problem"), ("where", "Where"), ("scanner", "Scanner"), ("seen", "First seen"), ("last", "Last seen")]) }}
+  {% if table.rows %}
+  <ul class="finding-cards">
+    {% for f in table.rows %}{% set r = said.get(f.id) %}
+    <li class="finding-card">
+      <div class="fc-top">
+        {% if picking %}<input type="checkbox" class="above" name="ids" value="{{ f.id }}" form="pick"
+          aria-label="Tick {{ f.title }}{% if f.file %} in {{ f.file }}{% endif %}" {% if ticked %}checked{% endif %}>{% endif %}
+        {{ sev(f.severity) }}
+        {% if r and r.chip %}<span class="tag">{{ r.chip }}</span>{% endif %}
+        {% if f.same_as is not none %}<span class="pill">same vulnerability</span>{% endif %}
+        {% if notes.get(f.id) and notes[f.id].status == "done" %}<span class="pill accent">{{ icon("spark", 12) }} explained</span>{% endif %}
+      </div>
+      <a class="row-link name" href="/findings/{{ f.id }}">{{ r.title if r else f.title }}</a>
+      <div class="sub">{% if r %}{{ f.title }} · {% endif %}{{ f.scanner }}: {{ f.rule_id }}</div>
+      {% if f.file %}<div class="sub mono">{{ f.file }}{% if f.line %}:{{ f.line }}{% endif %}</div>{% endif %}
+      {% if f.message %}<p class="small fc-text">{{ f.message|truncate(220) }}</p>{% endif %}
+      {% if f.status == "suppressed" %}<p class="small muted">{{ (f.suppression_reason or "")|replace("_", " ")|capitalize }}: {{ f.suppression_note }}</p>{% endif %}
+      <div class="fc-foot small muted">first seen {{ since(f.first_seen_at, now) }} · last seen {{ since(f.last_seen_at, now) }}</div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="card-body"><p class="empty">{% if table.q %}Nothing matches.{% else %}No {{ status }} findings.{% endif %}</p></div>
+  {% endif %}
+  {% else %}
   <div class="table-wrap">
   <table>
     <thead><tr>
@@ -150,7 +179,10 @@
     </tbody>
   </table>
   </div>
+  {% endif %}
 </section>
+
+{{ sections(app, app_scan) }}
 
 <section class="card" id="scans">
   <div class="card-head"><h2>Scans</h2>{{ search(scans, "Search scans", "scan") }}</div>

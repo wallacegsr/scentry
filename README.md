@@ -87,11 +87,25 @@ the header of the overview, each tab and each target, downloads what that page c
 JSON, findings as CSV (open, or all), and for a target SARIF too. Light and dark follow
 the system.
 
+The lists of targets, and a target's findings, can be **Cards** or a **Table** (the
+switch above the list), sorted and searched the same way; the choice is kept in a cookie,
+for each kind of list. An app's card says in a sentence or two what matters most about
+it, with a few chips: the worst kinds of finding, then its privacy notes.
+
 A target's findings show when each was first seen and when a scan last reported it. To
 suppress several at once, tick them on the Open tab (or search, for a rule's name, say,
 and **tick all shown**), then **Suppress ticked…**: one reason and review date for all
 of them, and one note for all, or a note of its own for any of them. A finding's own
 **Suppress** can also take the target's other open findings from the same rule with it.
+
+A finding's page puts it in plain words first. For a Home Assistant finding they're
+Barkley's: what it means and whether to worry. For a vulnerable package: whether a
+release fixes it, how far behind the newest release it is (and whether that one is years
+old), whether the app asks for it itself or it comes in through another library, each
+advisory linked to its record on OSV, and what you can do about it, which for someone
+else's app is to ask its developer. For your own code, it's the rule's longer
+description and documentation page, when the scanner gives them. The scanner's own
+message and code excerpt follow.
 
 **Share**, on a finding's page, writes it up as Markdown for a GitHub issue, a security
 advisory or a message: what was found, by which scanner and rule, a link to the line at
@@ -242,6 +256,29 @@ HA, Barkley picks it the way the Marketplace would.) Such a scan isn't repeated 
 you ask; once you install the item, the sync takes the target over. Only an entry that
 is in the catalog can be scanned from there. Names and descriptions are the publishers'
 own text, shown as plain text.
+
+### What an app does with your data
+
+An integration's or card's page, and each of its scans, shows what Barkley's report says
+beyond the findings (so does a repository of yours that holds an integration):
+
+- **Where your data can go**: a diagram of the private data it reads (logins,
+  `secrets.yaml`, other integrations' credentials…) and the places its code can connect
+  to (sites, your own network, a server the developer runs, a port on a device). A red
+  line marks a path Barkley found from your data to a place: solid when traced in the
+  code, dashed when only possible. Below it are the privacy notes (telemetry,
+  unencrypted connections…), which are never scored, and every address and port in the
+  code.
+- **What it can do inside Home Assistant**, in plain words.
+- **The developer's security habits**: what the app's repository shows about keeping it
+  safe: security scans in its workflows, Dependabot or Renovate, a security policy,
+  update pull requests left waiting, open issues that look security-related. Every check
+  green is **A+ security habits**. Context only: never part of the score.
+
+The plain words are Barkley's own explanations, asked of Barkley on the runner when a
+version is scanned. Scans from before this get them while the runner is idle, a few
+seconds each, from the stored report and without fetching anything. The diagram and the
+habits are drawn from the stored report, so older scans show them straight away.
 
 ### What an update changes, and new advisories
 
@@ -469,5 +506,7 @@ Postgres too, as CI does.
 ## Credits
 
 The Home Assistant checks are [Barkley](https://github.com/SeriesOfTubez/ha-barkley)
-(MIT), used unmodified: through its command line, and for the advisory re-check (which
-has no command) its own `recheck` function, run by its own Python.
+(MIT), used unmodified: through its command line, and for the advisory re-check and the
+plain words (which have no command) its own `recheck` function and its panel's
+explanations, run by its own Python. An app's page, its cards and its diagram follow
+Barkley's own panel.

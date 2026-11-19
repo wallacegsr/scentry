@@ -86,7 +86,7 @@ def reconcile(
                 f.opened_scan_id = scan.id
             f.title, f.message, f.severity = raw.title, raw.message, raw.severity
             f.category, f.file, f.line, f.evidence = raw.category, raw.file, raw.line, raw.evidence
-            f.vulns = raw.vulns
+            f.vulns, f.details = raw.vulns, raw.details
             f.last_seen_at, f.last_seen_scan_id = now, scan.id
 
     for fp, f in existing.items():

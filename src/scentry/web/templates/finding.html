@@ -37,13 +37,30 @@
         <a href="/findings/{{ twin.id }}"><strong>{{ twin.rule_id }}</strong></a>{% if twin.status != "open" %} ({{ twin.status }}){% endif %}{% endif %}:
         counted and announced once, there.</p>
       {% endif %}
-      {% if f.vulns and f.vulns.groups %}
-      <p class="small mono">{% if f.vulns.package %}{{ f.vulns.package }}: {% endif %}
-        {%- for g in f.vulns.groups %}{{ g|join(" = ") }}{{ "; " if not loop.last }}{% endfor %}</p>
+      {% if rule %}<p class="plain-title">{{ rule.title }}</p>{% endif %}
+      {% set links = (rule.links if rule else []) %}
+      {% if rule or about or pkg or bugs or doc %}
+      <dl class="explain">
+        {% if rule %}<dt>What it means</dt><dd>{{ rule.means }}</dd>
+        <dt>Should you worry?</dt><dd>{{ rule.worry }}</dd>{% endif %}
+        {% if about %}<dt>About the rule</dt><dd class="about">{{ about }}</dd>{% endif %}
+        {% if pkg %}<dt>Fix and newer versions</dt><dd><strong>{{ pkg.name }} {{ pkg.version }}</strong>: {{ pkg.facts|join(" · ") }}.
+          {%- if pkg.stale %} <strong>{{ pkg.stale }}</strong>{% endif %}</dd>
+        {% elif f.vulns and f.vulns.package %}<dt>Package</dt><dd class="mono">{{ f.vulns.package }}</dd>{% endif %}
+        {% if bugs %}<dt>{{ "The bugs" if bugs|length > 1 else "The bug" }}</dt><dd><ul class="bugs">
+          {% for b in bugs %}<li><a href="{{ b.url }}" target="_blank" rel="noopener noreferrer">{{ b.id }}{% if b.also %} ({{ b.also|join(", ") }}){% endif %}</a>
+            {%- if b.summary %}: {{ b.summary }}{% endif %}</li>{% endfor %}</ul></dd>{% endif %}
+        {% if action %}<dt>What you can do</dt><dd>{{ action }}</dd>{% endif %}
+        {% if links or doc %}<dt>Read more</dt><dd><ul class="bugs">
+          {% for label, url in links %}<li><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ label }}</a></li>{% endfor %}
+          {% if doc %}<li><a href="{{ doc }}" target="_blank" rel="noopener noreferrer">{{ f.scanner }}'s page for {{ f.rule_id }}</a></li>{% endif %}</ul></dd>{% endif %}
+      </dl>
       {% endif %}
+      {% if (rule or about or pkg or bugs or doc) and (f.message or f.evidence) %}<h3 class="subhead">What {{ f.scanner }} reported</h3>{% endif %}
       {% if f.message %}<p>{{ f.message }}</p>{% endif %}
       {% if f.evidence %}<pre>{{ f.evidence }}</pre>{% endif %}
       {% if not (f.message or f.evidence) %}<p class="muted">The scanner gave no more detail.</p>{% endif %}
+      {% if rule %}<p class="muted small">The plain words are Barkley's, the same for every app with this finding.</p>{% endif %}
     </div>
   </section>
 

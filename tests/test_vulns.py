@@ -251,7 +251,9 @@ def test_target_page_says_which_finding_it_repeats(tmp_path):
     page = client.get(f"/findings/{twin_id}", auth=("admin", "pw")).text
     assert "Already reported by osv-scanner as" in page and f"/findings/{held_id}" in page
     page = client.get(f"/findings/{held_id}", auth=("admin", "pw")).text
-    assert "urllib3: CVE-2025-66471 = GHSA-2XPW-W6GG-JR37" in page
+    assert '<dt>Package</dt><dd class="mono">urllib3</dd>' in page
+    assert ('<a href="https://osv.dev/vulnerability/GHSA-2XPW-W6GG-JR37" target="_blank" '
+            'rel="noopener noreferrer">GHSA-2XPW-W6GG-JR37 (CVE-2025-66471)</a>') in page
     exported = client.get(f"/targets/{tid}/export.json", auth=("admin", "pw")).json()
     same = {f["rule_id"]: f["same_as"] for f in exported["target"]["findings"]}
     assert same == {"CVE-2025-66471": None, "dep-vuln": held_id}

@@ -120,6 +120,10 @@ class Scan(Base):
     # What changed since diff_from (another scan of this target): Barkley's comparison.
     diff_from: Mapped[int | None] = mapped_column(default=None)
     diff: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    # Barkley's plain words for `report` (scanners/barkley_plain.py): each rule explained,
+    # what the app can do inside Home Assistant, its privacy notes. None: not asked yet;
+    # {"error": ...}: Barkley couldn't say.
+    plain: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
 
     target: Mapped[Target] = relationship(back_populates="scans")
 
@@ -156,6 +160,9 @@ class Finding(Base):
     # Reports only vulnerabilities that finding already reports (another scanner, or
     # another id for the same one): shown, but counted and announced once, there.
     same_as: Mapped[int | None] = mapped_column(default=None)
+    # What the scanner says about its rule, beyond this result: {"about": text, "url":
+    # its documentation (https)}. Untrusted text, like the rest.
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
 
     status: Mapped[str] = mapped_column(String(20), default="open", index=True)
     first_seen_at: Mapped[datetime.datetime] = mapped_column(default=utcnow)

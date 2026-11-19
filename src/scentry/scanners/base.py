@@ -29,6 +29,9 @@ class RawFinding:
     # one group per vulnerability it reports. How findings of one vulnerability under
     # different ids (CVE, GHSA, PYSEC...) are told to be the same (findings.mark_duplicates).
     vulns: dict | None = None
+    # What the scanner says about its rule beyond this result: {"about": text, "url":
+    # https documentation}. Kept on the finding (Finding.details).
+    details: dict | None = None
 
 
 @dataclass(slots=True)

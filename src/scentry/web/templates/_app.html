@@ -1,0 +1,106 @@
+{# What Barkley's report of one version says about an app, beyond its findings: where its
+   data can go, what it can do inside Home Assistant, the developer's security habits.
+   Built by web/report.py and app.py (app_parts). Names of sites, files and data come from
+   the scanned code: shown as text. #}
+{% from "_macros.html" import icon %}
+
+{# The diagram, drawn as SVG from report.Diagram's shapes. Colours are classes. #}
+{% macro diagram(d, label) -%}
+<svg class="flow flow-{{ d.suffix }}" viewBox="0 0 {{ d.width }} {{ d.height }}" role="img" aria-label="{{ label }}">
+  <defs>
+    <marker id="arrow-red-{{ d.suffix }}" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse"><path class="head red" d="M0,0 L10,5 L0,10 z"/></marker>
+    <marker id="arrow-grey-{{ d.suffix }}" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head grey" d="M0,0 L10,5 L0,10 z"/></marker>
+  </defs>
+  {%- for s in d.shapes %}
+  {%- if s.kind == "rect" %}
+  <rect class="{{ s.cls }}" x="{{ '%g'|format(s.x) }}" y="{{ '%g'|format(s.y) }}" width="{{ '%g'|format(s.w) }}" height="{{ '%g'|format(s.h) }}" rx="7"/>
+  {%- elif s.kind == "text" %}
+  <text class="{{ s.cls }}" x="{{ '%g'|format(s.x) }}" y="{{ '%g'|format(s.y) }}"{% if s.anchor %} text-anchor="{{ s.anchor }}"{% endif %}>{{ s.text }}</text>
+  {%- elif s.kind == "line" %}
+  <line class="{{ s.cls }}" x1="{{ '%g'|format(s.x) }}" y1="{{ '%g'|format(s.y) }}" x2="{{ '%g'|format(s.x2) }}" y2="{{ '%g'|format(s.y2) }}"{% if s.marker %} marker-end="url(#arrow-{{ s.marker }}-{{ d.suffix }})"{% endif %}/>
+  {%- elif s.kind == "path" %}
+  <path class="{{ s.cls }}" d="{{ s.d }}"{% if s.marker %} marker-end="url(#arrow-{{ s.marker }}-{{ d.suffix }})"{% endif %}/>
+  {%- endif %}
+  {%- endfor %}
+</svg>
+{%- endmacro %}
+
+{% macro from_scan(scan) -%}
+<span class="muted small">from <a href="/scans/{{ scan.id }}">scan {{ scan.id }}</a>{% if scan.ref %}, {{ scan.ref }}{% endif %}</span>
+{%- endmacro %}
+
+{% macro sections(app, scan, here=true) -%}
+{% if app %}
+<section class="card" id="data-flow">
+  <div class="card-head"><h2>Where your data can go</h2>{% if here %}{{ from_scan(scan) }}{% endif %}</div>
+  <div class="card-body">
+    <p class="muted small">Left: what it reads. Right: where it can connect. A red line means a path from your data to that
+      place was found in the code; no line means none was found.</p>
+    {% if app.flow %}
+    <div class="flow-wrap">{{ diagram(app.flow.wide, app.flow.label) }}{{ diagram(app.flow.narrow, app.flow.label) }}</div>
+    <p class="muted small">{{ app.flow.caption|join(" ") }}</p>
+    {% else %}
+    <p>It reads none of your private data, and its code names no network address.</p>
+    {% endif %}
+    <p class="small">{{ app.connects }}</p>
+    {% if app.privacy %}
+    <h3 class="subhead">Privacy notes</h3>
+    <ul class="notes">
+      {% for n in app.privacy %}
+      <li><span class="tag priv">{{ n.label }}</span> <strong>{{ n.title }}</strong>
+        {% if n.means %}<p class="small">{{ n.means }}</p>{% endif %}
+        {% if n.hosts %}<p class="small mono">{{ n.hosts|join(", ") }}</p>{% endif %}
+        {% if n.unknown %}<p class="small muted">What the code doesn't tell: {{ n.unknown }}</p>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    <p class="muted small">Privacy notes are never scored.</p>
+    {% endif %}
+    {% if app.hosts or app.ports %}
+    <details>
+      <summary>{{ app.hosts|length }} address{{ "es" if app.hosts|length != 1 }}{% if app.ports %} and {{ app.ports|length }} port{{ "s" if app.ports|length != 1 }}{% endif %} in its code</summary>
+      <ul class="addresses">
+        {% for h in app.hosts %}
+        <li><span class="mono">{{ h.name }}</span> <span class="muted small">{{ h.words }}{% if h.where %} · {{ h.where|join(", ") }}{% endif %}</span></li>
+        {% endfor %}
+        {% for p in app.ports %}
+        <li><span class="mono">port {{ p.number }}</span>{% if p.name %} ({{ p.name }}){% endif %}
+          <span class="muted small">{{ {"out": "it connects out", "in": "it listens"}.get(p.direction, "direction unknown") }}{% if p.where %} · {{ p.where|join(", ") }}{% endif %}</span></li>
+        {% endfor %}
+      </ul>
+      <p class="muted small">A name is a hint from the code. Nothing here was looked up anywhere.</p>
+    </details>
+    {% endif %}
+  </div>
+</section>
+
+{% if app.can_do or app.habits %}
+<div class="grid two">
+  {% if app.can_do %}
+  <section class="card" id="can-do">
+    <div class="card-head"><h2>What it can do inside Home Assistant</h2></div>
+    <div class="card-body"><ul class="can-do">{% for line in app.can_do %}<li>{{ line }}</li>{% endfor %}</ul></div>
+  </section>
+  {% endif %}
+  {% if app.habits %}{% set items, green = app.habits %}
+  <section class="card" id="habits">
+    <div class="card-head"><h2>The developer's security habits</h2>
+      {% if green %}<span class="pill good">{{ icon("star", 14) }} A+ security habits</span>{% endif %}</div>
+    <div class="card-body">
+      <p class="muted small">What the app's own repository shows about keeping it safe: context, never part of the score.
+        GitHub keeps scan alerts private, so it's read from public signs.</p>
+      <ul class="marks">
+        {% for h in items %}
+        <li class="mark-{{ h.mark or 'fact' }}">
+          {%- if h.mark == "yes" %}{{ icon("check", 16) }}{% elif h.mark == "no" %}{{ icon("minus", 16) }}{% elif h.mark == "warn" %}{{ icon("alert", 16) }}{% else %}<span class="dot" aria-hidden="true"></span>{% endif %}
+          <span>{{ h.text }}{% if h.code %} <code>{{ h.code }}</code>{% endif %}{{ h.after }}
+          {% if h.issues %}<ul class="issues">{% for i in h.issues %}<li>{% if i.url %}<a href="{{ i.url }}" target="_blank" rel="noopener noreferrer">#{{ i.number }}</a>{% else %}#{{ i.number }}{% endif %}
+            {{ i.title }} <span class="muted">{{ i.age }}</span></li>{% endfor %}</ul>{% endif %}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+  {% endif %}
+</div>
+{% endif %}
+{% endif %}
+{%- endmacro %}

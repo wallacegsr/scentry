@@ -1,6 +1,7 @@
 """The runner: takes queued scans one at a time and queues the scheduled ones. With
-nothing queued, it looks for new commits on my repositories (commits.py) and asks
-advisories again for versions scanned a day ago (updates.py).
+nothing queued, it looks for new commits on my repositories (commits.py), asks
+advisories again for versions scanned a day ago, and asks Barkley's plain words for
+reports stored without them (updates.py).
 
 The queue is the scans table, so a restart loses nothing. Run a single runner: a scan
 found "running" at start-up is assumed to be this runner's own interrupted work.
@@ -119,12 +120,13 @@ def main(settings: Settings | None = None) -> None:
                 status = session.scalar(select(Scan.status).where(Scan.id == scan_id))
                 log.info("scan %s: %s", scan_id, status or "removed with its target")
                 continue
-            # Nothing queued: one look for new commits, or one advisory re-check, if one
-            # is due (seconds of work each).
+            # Nothing queued: one look for new commits, one advisory re-check, or Barkley's
+            # plain words for one stored report, if one is due (seconds of work each).
             try:
-                if commits.check_due(session, settings) or updates.recheck_due(session, settings):
+                if (commits.check_due(session, settings) or updates.recheck_due(session, settings)
+                        or updates.plain_due(session, settings)):
                     continue
             except Exception:
-                log.exception("new-commit check or advisory re-check failed")
+                log.exception("new-commit check, advisory re-check or plain words failed")
                 session.rollback()
         time.sleep(settings.poll_seconds)

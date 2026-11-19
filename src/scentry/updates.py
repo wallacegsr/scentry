@@ -1,4 +1,4 @@
-"""Two things Barkley does for Home Assistant targets, after and between scans.
+"""What Barkley does for Home Assistant targets after and between scans.
 
 What an update changes: when a scan is done, Barkley compares its report with an earlier
 one (`sniff-test diff`, offline: two report files, nothing fetched) and the comparison is
@@ -12,6 +12,9 @@ offered version resolved (kept in Barkley's store). No code is fetched and GitHu
 asked anything. When the advisories changed, the result is a new scan of kind "recheck"
 with Barkley's rescored report, compared with the scan it re-checked; the notifier sees
 it like any finished scan.
+
+Plain words for stored reports: the portal shows what Barkley's panel says about each rule
+and app (barkley.plain). Scans stored before it did get them when the runner is idle.
 """
 
 from __future__ import annotations
@@ -168,6 +171,7 @@ def recheck(session: Session, base: Scan, settings: Settings,
     with _Work(settings) as work:
         res = barkley.recheck(settings.barkley_store, base.barkley_id, work,
                               settings.scanner_timeout)  # fmt: skip
+        words = barkley.plain(res.report, work, settings.scanner_timeout) if res.report else None
     if res.state == "error":
         log.warning("scan %s: advisories couldn't be asked again: %s", base.id, res.detail)
         base.advisories_error, base.advisories_next_at = res.detail, now + RETRY
@@ -192,6 +196,8 @@ def recheck(session: Session, base: Scan, settings: Settings,
         advisories_checked_at=now,
         advisories_next_at=now + every if res.barkley_id is not None else None,
     )  # fmt: skip
+    if words is not None:  # else asked again later (plain_due): None here would be JSON null
+        new.plain = words
     session.add(new)
     session.flush()
     # The target's findings stand for its newest scan: a re-check of an older one (the
@@ -224,4 +230,31 @@ def recheck_due(session: Session, settings: Settings, now: datetime.datetime | N
         base.advisories_error = f"{type(exc).__name__}: {exc}"[:300]
         base.advisories_next_at = now + RETRY  # not again on the next loop
         session.commit()
+    return True
+
+
+# --- Barkley's plain words for reports stored before it was asked ---------------------
+
+
+def plain_due(session: Session, settings: Settings) -> bool:
+    """Ask Barkley for its plain words about one stored report that has none yet (scans
+    from before the portal showed them), newest first. Read from the stored report alone:
+    nothing is fetched. True when one was asked."""
+    if barkley.barkley_python() is None:
+        return False
+    scan = session.scalar(
+        select(Scan).where(Scan.status == "done", Scan.report.is_not(None),
+                           Scan.plain.is_(None)).order_by(Scan.id.desc()).limit(1)
+    )  # fmt: skip
+    if scan is None:
+        return False
+    words = None
+    if scan.report:
+        with _Work(settings) as work:
+            words = barkley.plain(scan.report, work, settings.scanner_timeout)
+    # Asked once: a failure isn't asked again until a new scan.
+    scan.plain = words or {"error": "Barkley couldn't be asked"}
+    if "error" in scan.plain:
+        log.warning("scan %s: no plain words from Barkley: %s", scan.id, scan.plain["error"])
+    session.commit()
     return True

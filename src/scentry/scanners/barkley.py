@@ -17,8 +17,10 @@ import datetime
 import json
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from scentry import proc, sarif
 from scentry.models import SEVERITY_RANK, utcnow
@@ -97,6 +99,7 @@ class Barkley(Scanner):
         detail = f"sniff-test {(report.get('tool') or {}).get('version', '?')}"
         if unfinished := unfinished_checks(report):
             detail += "; didn't finish: " + "; ".join(unfinished)
+        kept = {k: v for k, v in report.items() if k not in _DROP}
         return ScannerRun(
             self.name,
             "ok",
@@ -109,7 +112,8 @@ class Barkley(Scanner):
                 "unfinished": unfinished,
                 "commit_sha": (report.get("target") or {}).get("commit_sha"),
                 "ref": (report.get("target") or {}).get("ref"),
-                "report": {k: v for k, v in report.items() if k not in _DROP},
+                "report": kept,
+                "plain": plain(kept, ctx.out_dir, ctx.settings.scanner_timeout),
                 "barkley_id": int(stored[1]) if stored else None,
             },
         )
@@ -124,7 +128,7 @@ def unfinished_checks(report: dict) -> list[str]:
 
 
 def findings_of(report: dict) -> list[RawFinding]:
-    return [_finding(f) for f in report.get("findings") or [] if isinstance(f, dict)]
+    return [raw_finding(f) for f in report.get("findings") or [] if isinstance(f, dict)]
 
 
 class BarkleyError(Exception):
@@ -189,6 +193,71 @@ def recheck(store: str, barkley_id: int, work: Path, timeout: int) -> Recheck:
     return Recheck("error", sarif.clean(result.get("detail") or "unknown", 300))
 
 
+PLAIN_VERSION = 1
+
+
+def plain(report: dict, work: Path, timeout: int) -> dict | None:
+    """Barkley's plain words for one of its reports (barkley_plain.py, run by its own
+    interpreter): read from the report alone, so a stored report can be asked too. None
+    when they couldn't be had this time (Barkley isn't installed, or the script failed to
+    run); {"error": ...} when Barkley couldn't say."""
+    python = barkley_python()
+    if python is None:
+        return None
+    src, out = work / "plain-report.json", work / "plain.json"
+    src.write_text(json.dumps(report), "utf-8")
+    out.unlink(missing_ok=True)
+    script = Path(__file__).with_name("barkley_plain.py")
+    try:
+        res = proc.run([python, "-I", str(script), str(src), str(out)], cwd=work,
+                       timeout=min(timeout, 120))  # fmt: skip
+        result = json.loads(out.read_text("utf-8"))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    finally:
+        src.unlink(missing_ok=True)
+    if not isinstance(result, dict):
+        return None
+    if result.get("version") != PLAIN_VERSION:
+        detail = result.get("error") or f"unsupported version {result.get('version')!r}"
+        tail = (res.stderr or "").strip()[-200:]
+        return {"error": sarif.clean(f"{detail} {tail}".strip(), 400)}
+    return clean_plain(result)
+
+
+def _texts(items: Any, n: int, limit: int) -> list[str]:
+    return [sarif.clean(x, limit) for x in items[:n] if isinstance(x, str)] if isinstance(
+        items, list) else []  # fmt: skip
+
+
+def clean_plain(result: dict) -> dict:
+    """The script's answer, in the shapes and sizes the portal expects. Mostly Barkley's own
+    fixed text; names of data, sites and files in it come from the scanned code."""
+    rules = {}
+    for rule_id, r in list((result.get("rules") or {}).items())[:300]:
+        if not isinstance(r, dict):
+            continue
+        links = [[sarif.clean(x[0], 120), sarif.clean(x[1], 300)] for x in r.get("links") or []
+                 if isinstance(x, list) and len(x) == 2 and str(x[1]).startswith("https://")]
+        rules[sarif.clean(rule_id, 300)] = {
+            "title": sarif.clean(r.get("title"), 300), "means": sarif.clean(r.get("means"), 1500),
+            "worry": sarif.clean(r.get("worry"), 1000), "chip": sarif.clean(r.get("chip"), 60),
+            "links": links[:5],
+        }  # fmt: skip
+    labels = {sarif.clean(k, 200): sarif.clean(v, 100)
+              for k, v in list((result.get("data_labels") or {}).items())[:100]}  # fmt: skip
+    ports = {k: sarif.clean(v, 60) for k, v in list((result.get("ports") or {}).items())[:100]
+             if isinstance(k, str) and k.isdigit()}  # fmt: skip
+    notes = [{"kind": sarif.clean(n.get("kind"), 20), "label": sarif.clean(n.get("label"), 60),
+              "title": sarif.clean(n.get("title"), 300), "means": sarif.clean(n.get("means"), 1500),
+              "unknown": sarif.clean(n.get("unknown"), 1000),
+              "hosts": _texts(n.get("hosts"), 6, 200), "where": _texts(n.get("where"), 4, 300)}
+             for n in (result.get("privacy") or [])[:20] if isinstance(n, dict)]  # fmt: skip
+    return {"version": PLAIN_VERSION, "barkley": sarif.clean(result.get("barkley"), 40),
+            "rules": rules, "can_do": _texts(result.get("can_do"), 40, 200),
+            "data_labels": labels, "ports": ports, "privacy": notes}  # fmt: skip
+
+
 def barkley_python() -> str | None:
     """The interpreter of Barkley's own environment, from its command's first line."""
     exe = shutil.which("sniff-test")
@@ -221,7 +290,8 @@ def _vulns(f: dict) -> dict | None:
     return {"package": sarif.clean(dep.get("package"), 200) or None, "groups": groups[:50]}
 
 
-def _finding(f: dict) -> RawFinding:
+def raw_finding(f: dict) -> RawFinding:
+    """One finding of a Barkley report, as the portal keeps it."""
     severity = str(f.get("severity") or "medium").lower()
     line = f.get("line")
     return RawFinding(

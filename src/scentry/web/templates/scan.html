@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon, ai_note, result, sev, since, when, th, search %}
+{% from "_app.html" import sections %}
 {% block title %}Scan {{ scan.id }} · {{ target.name }} · Scentry{% endblock %}
 {% block main %}
 <nav class="crumbs"><a href="/{{ tab }}">{{ tabs[tab] }}</a><span class="sep">›</span>
@@ -106,6 +107,8 @@
   </div>
 </section>
 {% endif %}
+
+{{ sections(app, scan, here=false) }}
 
 <section class="card" id="scanners">
   <div class="card-head"><h2>Scanners</h2>{{ search(runs, "Search scanners", "scanner") }}</div>

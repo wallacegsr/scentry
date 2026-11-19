@@ -38,6 +38,8 @@
   --s-medium: #94600a;   --s-medium-bg: #fcf1d6;
   --s-low: #2f6b4f;      --s-low-bg: #e4f2ea;
   --s-info: #556372;     --s-info-bg: #eaeef2;
+  /* Privacy notes: never scored, so not a severity colour. */
+  --priv: #6a45b0;       --priv-soft: #efe9fa;
   color-scheme: light;
 }
 
@@ -76,6 +78,7 @@
     --s-medium: #f2c45b;   --s-medium-bg: rgba(242, 196, 91, 0.14);
     --s-low: #8fd3ad;      --s-low-bg: rgba(143, 211, 173, 0.13);
     --s-info: #a9b6c3;     --s-info-bg: rgba(169, 182, 195, 0.12);
+    --priv: #c3aef5;       --priv-soft: rgba(195, 174, 245, 0.13);
     color-scheme: dark;
   }
 }
@@ -415,3 +418,98 @@ ul.picked li:first-child { border-top: 0; }
 ul.picked .what { overflow-wrap: anywhere; }
 ul.picked .field.own { font-weight: 400; }
 @media (max-width: 720px) { ul.picked li { grid-template-columns: minmax(0, 1fr); } }
+
+/* Cards or a table (listings and findings). */
+.looks a { display: inline-flex; align-items: center; gap: 6px; }
+.sort-by { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 10px 18px;
+  border-bottom: 1px solid var(--line); }
+.sort-by a.sort { color: var(--muted); }
+.sort-by a.sort.on { color: var(--text); font-weight: 600; }
+p.empty { text-align: center; color: var(--muted); margin: 12px 0; }
+.app-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px;
+  padding: 16px 18px; }
+.app-card { position: relative; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
+.app-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow); }
+.app-card.look { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); }
+.app-card a.row-link::after { content: ""; position: absolute; inset: 0; }
+.app-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.app-id { min-width: 0; overflow-wrap: anywhere; }
+.app-id .sub { color: var(--muted); font-size: 0.8rem; margin-top: 2px; }
+.app-result { flex: 0 0 auto; }
+.app-sentence { margin: 0; font-size: 0.9rem; flex: 1 1 auto; }
+.app-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding-top: 10px;
+  border-top: 1px solid var(--line); }
+.app-foot > :last-child { margin-left: auto; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { display: inline-block; padding: 2px 9px; border-radius: 6px; font-size: 0.78rem; font-weight: 600;
+  color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); }
+.tag.bad { color: var(--danger); background: var(--danger-soft); border-color: transparent; }
+.tag.warn { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+.tag.priv { color: var(--priv); background: var(--priv-soft); border-color: transparent; }
+ul.finding-cards { list-style: none; margin: 0; padding: 16px 18px; display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.finding-card { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); min-width: 0; }
+.finding-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow); }
+.finding-card a.row-link::after { content: ""; position: absolute; inset: 0; }
+.finding-card .above { position: relative; z-index: 1; }
+.finding-card .sub { color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
+.fc-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
+.fc-top input { width: 18px; height: 18px; margin: 0 4px 0 0; accent-color: var(--accent); }
+.fc-text { margin: 4px 0 0; overflow-wrap: anywhere; }
+.fc-foot { margin-top: auto; padding-top: 6px; }
+
+/* The data-flow diagram (web/report.py lays it out; two drawings, one shown). */
+.flow-wrap { margin: 6px 0; }
+svg.flow { display: block; width: 100%; height: auto; }
+svg.flow-n { display: none; max-width: 440px; margin: 0 auto; }
+@media (max-width: 640px) {
+  svg.flow-w { display: none; }
+  svg.flow-n { display: block; }
+}
+svg.flow text { font-size: 12px; fill: var(--text); }
+svg.flow text.sm { font-size: 10.5px; fill: var(--muted); }
+svg.flow text.nm { font-size: 12.5px; font-weight: 600; }
+svg.flow .box { fill: var(--surface-2); stroke: var(--line-strong); }
+svg.flow .box.app { fill: var(--surface); stroke: var(--text); stroke-width: 1.5; }
+svg.flow .box.bad { fill: var(--danger-soft); stroke: var(--danger); }
+svg.flow .box.sens { fill: var(--warn-soft); stroke: var(--warn); }
+svg.flow .box.priv { fill: var(--priv-soft); stroke: var(--priv); }
+svg.flow .wire { fill: none; stroke: var(--muted); }
+svg.flow .wire.dash { stroke-dasharray: 3 3; }
+svg.flow .leak { fill: none; stroke: var(--danger); stroke-width: 2.4; }
+svg.flow .leak.maybe { stroke-width: 1.6; stroke-dasharray: 6 4; }
+svg.flow .head.red { fill: var(--danger); }
+svg.flow .head.grey { fill: var(--muted); }
+
+/* What an app can do, the developer's habits, privacy notes, addresses. */
+h3.subhead { margin: 16px 0 6px; font-size: 0.9rem; }
+ul.can-do, ul.addresses, ul.notes, ul.marks, ul.issues, ul.bugs { list-style: none; margin: 0; padding: 0; }
+ul.can-do li { padding: 5px 0; border-bottom: 1px solid var(--line); }
+ul.can-do li:last-child { border-bottom: 0; }
+ul.addresses { margin: 8px 0; display: grid; gap: 4px; }
+ul.addresses li, ul.notes li { overflow-wrap: anywhere; }
+ul.notes li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+ul.notes li:last-child { border-bottom: 0; }
+ul.notes p { margin: 4px 0 0; }
+ul.marks { display: grid; gap: 8px; }
+ul.marks > li { display: flex; gap: 8px; align-items: flex-start; overflow-wrap: anywhere; }
+ul.marks > li > .icon { margin-top: 2px; }
+.mark-yes > .icon { color: var(--good); }
+.mark-no > .icon { color: var(--muted); }
+.mark-warn > .icon { color: var(--warn); }
+ul.marks .dot { flex: 0 0 auto; width: 6px; height: 6px; margin: 8px 5px 0; border-radius: 50%;
+  background: var(--muted); }
+ul.issues { margin: 6px 0 0; display: grid; gap: 3px; font-size: 0.85rem; }
+.plain-title { font-weight: 600; font-size: 1rem; margin-top: 0; }
+dl.explain { display: grid; grid-template-columns: minmax(7rem, max-content) 1fr; gap: 8px 16px;
+  margin: 0 0 12px; font-size: 0.92rem; }
+dl.explain dt { color: var(--muted); font-weight: 600; }
+dl.explain dd { margin: 0; overflow-wrap: anywhere; }
+dl.explain dd.about { white-space: pre-line; }
+ul.bugs { display: grid; gap: 4px; }
+@media (max-width: 640px) {
+  dl.explain { grid-template-columns: 1fr; gap: 2px; }
+  dl.explain dd { margin-bottom: 8px; }
+}
