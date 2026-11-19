@@ -432,6 +432,28 @@ def test_a_finding_is_matched_to_its_reports():
     assert rp.report_finding(None, f) is None
 
 
+def test_stars_and_downloads_are_facts_in_words():
+    def pop(popularity, ref="v1.2.0"):
+        rep = app_report()
+        rep["target"]["ref"] = ref
+        if popularity is not ...:
+            rep["popularity"] = popularity
+        return rp.popularity(rep)
+
+    assert rp.popularity(None) is None and pop(...) is None and pop(None) is None
+    assert pop({"stars": 1234, "downloads": 56789}) == rp.Popularity(
+        "1,234 stars on GitHub", "56,789 downloads of the release file for v1.2.0")
+    assert pop({"stars": 1, "downloads": 1}, ref=None) == rp.Popularity(
+        "1 star on GitHub", "1 download of the release file")
+    assert pop({"stars": 0, "downloads": 0}).stars == "0 stars on GitHub"
+    source = "Downloads not counted: installed from its source, with no release file"
+    assert pop({"stars": 383, "downloads": None}).downloads == source
+    assert pop({"stars": "many"}) == rp.Popularity("", source)  # no downloads key: the same
+    # A count that isn't one is left out, never shown as 0, nor as from the source.
+    assert pop({"stars": 5, "downloads": -3}) == rp.Popularity("5 stars on GitHub", "")
+    assert pop({"stars": True, "downloads": "lots"}) is None
+
+
 # --- the pages -------------------------------------------------------------------------
 
 
@@ -500,6 +522,20 @@ def test_where_its_data_can_go_on_the_target_and_scan_pages(client):
     bare, _ = seed_app({"schema_version": 1, "findings": []}, name="Old Report")
     page = client.get(f"/targets/{bare}", auth=AUTH).text
     assert "Where your data can go" not in page and "security habits" not in page
+
+
+def test_stars_and_downloads_under_the_heading(client):
+    rep = app_report()
+    rep["target"]["ref"] = "v1.2.0"
+    rep["popularity"] = {"stars": 1234, "downloads": 56789}
+    tid, sid = seed_app(rep, PLAIN)
+    for url in (f"/targets/{tid}", f"/scans/{sid}"):
+        page = client.get(url, auth=AUTH).text
+        assert '<p class="facts">' in page and "1,234 stars on GitHub" in page
+        assert "56,789 downloads of the release file for v1.2.0" in page
+        assert "never part of the score" in page
+    older, _ = seed_app(app_report(), PLAIN, name="Before 0.14")  # Barkley didn't count them
+    assert '<p class="facts">' not in client.get(f"/targets/{older}", auth=AUTH).text
 
 
 def test_a_finding_in_plain_words(client):

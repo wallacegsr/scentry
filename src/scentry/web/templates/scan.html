@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon, ai_note, result, sev, since, when, th, search %}
-{% from "_app.html" import sections %}
+{% from "_app.html" import sections, popularity %}
 {% block title %}Scan {{ scan.id }} · {{ target.name }} · Scentry{% endblock %}
 {% block main %}
 <nav class="crumbs"><a href="/{{ tab }}">{{ tabs[tab] }}</a><span class="sep">›</span>
@@ -13,6 +13,7 @@
       {% if scan.ref or scan.commit_sha %}<span class="mono">{{ scan.ref or "" }} {{ scan.commit_sha or "" }}</span>{% endif %}
       <span>queued {{ when(scan.queued_at) }}</span><span>finished {{ when(scan.finished_at) }}</span>
     </div>
+    {% if app and app.popularity %}{{ popularity(app.popularity) }}{% endif %}
   </div>
   <div class="grade-block">
     {% if scan.status == "done" and scan.verdict %}<span class="grade big g-{{ scan.score|bucket }}">{{ scan.verdict }}</span>

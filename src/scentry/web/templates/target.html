@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon, choice, grade, result, sev, since, when, th, search, modal_head, export_button, export_dialog, look_switch, sort_by %}
-{% from "_app.html" import sections %}
+{% from "_app.html" import sections, popularity %}
 {% block title %}{{ target.name }} · Scentry{% endblock %}
 {% block main %}
 <nav class="crumbs"><a href="/{{ tab }}">{{ tabs[tab] }}</a><span class="sep">›</span><span>{{ target.name }}</span></nav>
@@ -14,6 +14,7 @@
       {% if target.origin == "hacs" %}<span>{% if target.hacs_removed_at %}uninstalled; no longer rescanned on a schedule{% else %}installed {{ target.installed_version }}{% endif %}</span>{% endif %}
       {% if target.interval_hours and not target.hacs_removed_at %}<span>rescanned every {{ target.interval_hours }} hours</span>{% endif %}
     </div>
+    {% if app and app.popularity %}{{ popularity(app.popularity) }}{% endif %}
   </div>
   <div class="grade-block">
     {% if graded %}<span class="grade big g-{{ graded.score|bucket }}">{{ graded.verdict }}</span>

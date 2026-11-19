@@ -104,7 +104,8 @@ def app_parts(scan: Scan | None, name: str) -> dict | None:
             "connects": barkley_report.connection_sentence(rep, plain),
             "hosts": barkley_report.hosts(rep), "ports": barkley_report.ports(rep, plain),
             "privacy": plain.get("privacy") or [], "can_do": plain.get("can_do") or [],
-            "habits": barkley_report.habits(rep)}  # fmt: skip
+            "habits": barkley_report.habits(rep),
+            "popularity": barkley_report.popularity(rep)}  # fmt: skip
 
 
 def _graded(scans: list[Scan], version: str | None) -> Scan | None:

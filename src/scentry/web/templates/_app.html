@@ -25,6 +25,12 @@
 </svg>
 {%- endmacro %}
 
+{# Stars and downloads, under a page's heading: Barkley's count for that version. #}
+{% macro popularity(p) -%}
+<p class="facts">{% if p.stars %}<span>{{ icon("star", 14) }} {{ p.stars }}</span>{% endif %}
+  {%- if p.downloads %}<span>{{ p.downloads }}</span>{% endif %}<span>never part of the score</span></p>
+{%- endmacro %}
+
 {% macro from_scan(scan) -%}
 <span class="muted small">from <a href="/scans/{{ scan.id }}">scan {{ scan.id }}</a>{% if scan.ref %}, {{ scan.ref }}{% endif %}</span>
 {%- endmacro %}

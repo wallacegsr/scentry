@@ -357,6 +357,11 @@ label.check input { margin-top: 3px; }
 .segmented a.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 .meta { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--muted); font-size: 0.85rem; }
 .meta > span { overflow-wrap: anywhere; }
+/* Stars and downloads under a page's heading: facts, never scored. */
+p.facts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 0; color: var(--muted);
+  font-size: 0.85rem; }
+p.facts > span:last-child { font-style: italic; }
+p.facts .icon { color: var(--warn); }
 dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 0; font-size: 0.9rem; }
 dl.facts dt { color: var(--muted); }
 dl.facts dd { margin: 0; overflow-wrap: anywhere; }

@@ -574,6 +574,44 @@ def all_green(h: dict) -> bool:
             and not h.get("dependabot_but_known_vulns"))  # fmt: skip
 
 
+# --- stars and downloads ---------------------------------------------------------------
+
+
+@dataclass
+class Popularity:
+    stars: str  # "383 stars on GitHub"; "" when the report didn't say
+    downloads: str  # the same
+
+
+def _count(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _many(n: int, one: str) -> str:
+    return f"{n:,} {one if n == 1 else one + 's'}"
+
+
+def popularity(report: Any) -> Popularity | None:
+    """The repository's stars, and the downloads of the release file that is installed, as
+    Barkley counted them when it scanned that version: facts, never scored (popularity
+    isn't safety, and stars can be bought). None: it didn't count them (a scan from before
+    Barkley 0.14.0, or a local folder)."""
+    pop = report.get("popularity") if isinstance(report, dict) else None
+    if not isinstance(pop, dict):
+        return None
+    stars, n = _count(pop.get("stars")), _count(pop.get("downloads"))
+    target = report.get("target") if isinstance(report.get("target"), dict) else {}
+    ref = sarif.clean(target.get("ref"), 60)
+    downloads = ""  # a count that isn't one is left out, never shown as 0
+    if pop.get("downloads") is None:  # installed from the source: no file to count, not 0
+        downloads = "Downloads not counted: installed from its source, with no release file"
+    elif n is not None:
+        downloads = f"{_many(n, 'download')} of the release file" + (f" for {ref}" if ref else "")
+    if stars is None and not downloads:
+        return None
+    return Popularity(f"{_many(stars, 'star')} on GitHub" if stars is not None else "", downloads)
+
+
 # --- an app's card ---------------------------------------------------------------------
 
 BIG = ("critical", "high", "medium")
