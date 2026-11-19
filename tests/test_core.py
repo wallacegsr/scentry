@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -119,6 +120,30 @@ def test_hidden_characters_in_evidence_are_marked():
         "artifactLocation": {"uri": "a.go"}, "region": {"startLine": 1, "snippet": {
             "text": f'x := "{rlo}"'}}}}]}]}]}  # fmt: skip
     assert sarif.parse(doc, "semgrep")[0].evidence == 'x := "<U+202E>"'
+
+
+def test_the_source_holds_no_hidden_characters():
+    """Scentry's own files write a hidden character as an escape, never as itself: it is what
+    a bidi attack hides in, and Bandit (B613) and Semgrep rightly flag it when Scentry scans
+    itself. A tab, a line end and a carriage return are the only control characters."""
+    root = Path(__file__).resolve().parents[1]
+    files = [root / ".env.example", *root.glob("*.md"), *root.glob("*.toml"),
+             *root.glob("*.yaml")]  # fmt: skip
+    for folder in ("src", "tests", "docker", ".github"):
+        files += [p for p in (root / folder).rglob("*")
+                  if p.is_file() and "__pycache__" not in p.parts]  # fmt: skip
+    found = []
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue  # an image or a font
+        for n, line in enumerate(text.split(chr(10)), 1):
+            hidden = [f"U+{ord(c):04X}" for c in line if ord(c) not in (9, 13)
+                      and unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp")]  # fmt: skip
+            if hidden:
+                found.append(f"{path.relative_to(root)}:{n} {' '.join(hidden)}")
+    assert not found, "write these as escapes: " + ", ".join(found)
 
 
 # --- fingerprints and lifecycle --------------------------------------------------------

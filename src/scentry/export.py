@@ -266,7 +266,7 @@ _REPO = re.compile(r"^[\w.-]+/[\w.-]+$")
 _GHSA = re.compile(r"^GHSA(-[a-z0-9]{4}){3}$")
 _CVE = re.compile(r"^CVE-\d{4}-\d{4,}$")
 _MARKUP = re.compile(r"([\\`*_\[\]<>|~&])")
-WORD_JOINER = "⁠"  # invisible; keeps GitHub from reading @name or #12 as a reference
+WORD_JOINER = "\u2060"  # invisible; keeps GitHub from reading @name or #12 as a reference
 
 
 def github_repo(target: Target) -> str | None:

@@ -24,7 +24,7 @@ def clean(text: Any, limit: int) -> str:
 
 # Evidence (a line of the scanned code) keeps its hidden characters as a mark, "<U+202E>",
 # instead of losing them: a reviewer must see that the line holds one, or a bidi attack
-# and a check against one both look like "". Not "‮": that's how code writes them
+# and a check against one both look like "". Not "\u202e": that's how code writes them
 # itself, and a check written with escapes must still read differently from the
 # characters. A mark is plain text, safe on any page and in any export.
 MARK = re.compile(r"<U\+([0-9A-F]{4})>")
