@@ -7,17 +7,19 @@ from __future__ import annotations
 import collections
 import datetime
 import json
+import logging
+import os
 import sys
 import types
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from scentry import db, findings, pipeline, sarif, updates, worker
 from scentry.config import Settings
-from scentry.models import Finding, Scan, Target, utcnow
+from scentry.models import Finding, LogEntry, Scan, Target, utcnow
 from scentry.proc import Result
 from scentry.scanners import barkley
 from scentry.scanners.base import RawFinding, Scanner, ScannerRun
@@ -599,3 +601,40 @@ def test_my_codes_findings_show_their_rules_details(client):
     page = client.get(f"/findings/{ids['osv-scanner']}", auth=AUTH).text
     assert 'href="https://osv.dev/vulnerability/GHSA-2XPW-W6GG-JR37"' in page
     assert "osv-scanner's page for" not in page  # the same page as the bug's own link
+
+
+# --- on Postgres -----------------------------------------------------------------------
+
+POSTGRES = os.environ.get("SCENTRY_TEST_POSTGRES")  # an empty scratch database; CI sets it
+
+
+@pytest.mark.skipif(not POSTGRES, reason="needs SCENTRY_TEST_POSTGRES")
+def test_every_page_opens_on_postgres():
+    """Postgres refuses some SQL that SQLite, which the other tests use, lets through: a
+    query grouped by an expression broke the System page this way. Every page, on it."""
+    engine = db.make_engine(POSTGRES)
+    with engine.begin() as conn:  # start from nothing
+        conn.execute(text("DROP SCHEMA public CASCADE; CREATE SCHEMA public"))
+    engine.dispose()
+    s = Settings(_env_file=None, database_url=POSTGRES, admin_password="pw")
+    client = TestClient(create_app(s), follow_redirects=False)
+    rep = app_report()
+    rep["popularity"] = {"stars": 3, "downloads": None}
+    tid, sid = seed_app(rep, PLAIN)
+    with db.SessionLocal() as session:
+        for level in (logging.WARNING, logging.ERROR, logging.ERROR):
+            session.add(LogEntry(at=utcnow(), service="web", level=level, logger="t",
+                                 message="something"))  # fmt: skip
+        session.commit()
+        fids = list(session.scalars(select(Finding.id)))
+    page = client.get("/system", auth=AUTH)
+    assert page.status_code == 200 and "Last 24 hours: 2 errors, 1 warning." in page.text
+    fid = fids[0]
+    for url in ("/", "/ha", "/ha?view=cards", "/ha?sort=score&dir=desc&q=legit", "/code",
+                "/others", "/marketplace", "/log", "/log?level=error&service=web&q=some",
+                "/export.json", "/export/findings.csv", f"/targets/{tid}",
+                f"/targets/{tid}?view=cards", f"/targets/{tid}/export.json",
+                f"/targets/{tid}/export.sarif", f"/targets/{tid}/suppress?ids={fid}",
+                f"/scans/{sid}", f"/findings/{fid}", f"/findings/{fid}/share",
+                f"/findings/{fid}/finding.md"):  # fmt: skip
+        assert client.get(url, auth=AUTH).status_code == 200, url

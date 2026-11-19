@@ -13,10 +13,13 @@ off and named as data, and the portal shows every answer as the model's, possibl
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import logging
 import re
+import threading
 import time
+from collections.abc import Iterator
 from typing import Any
 
 from sqlalchemy import select
@@ -43,6 +46,7 @@ HEARTBEAT = datetime.timedelta(minutes=2)  # the portal calls the service gone a
 STUCK = datetime.timedelta(minutes=15)  # a "running" note this old was interrupted
 LOOP_SECONDS = 3
 RETRY_SECONDS = 60  # after an overloaded or unreachable API
+BEAT_SECONDS = 30  # while a model answers, the service says it's alive this often
 MAX_FINDINGS = 60  # in a scan review; the most severe first
 MESSAGE_CHARS = 800
 EVIDENCE_CHARS = 1500
@@ -271,6 +275,30 @@ def _count(state: AiState, now: datetime.datetime) -> None:
     state.used += 1
 
 
+@contextlib.contextmanager
+def _alive() -> Iterator[None]:
+    """While a model answers, keep telling the portal this service is up. A slow local
+    model can take longer than HEARTBEAT, and the System tab would call it not running."""
+    stop = threading.Event()
+
+    def beat() -> None:
+        while not stop.wait(BEAT_SECONDS):
+            try:
+                with db.SessionLocal() as session:
+                    state_row(session).seen_at = utcnow()
+                    session.commit()
+            except Exception:
+                log.warning("couldn't tell the portal the service is up", exc_info=True)
+
+    thread = threading.Thread(target=beat, name="ai-alive", daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
+
+
 def run_once(session: Session, provider: Provider, settings: Settings,
              now: datetime.datetime | None = None) -> str:  # fmt: skip
     """Answer the oldest waiting request. Returns "idle", "limit", "done", "error" or "retry"."""
@@ -307,7 +335,8 @@ def run_once(session: Session, provider: Provider, settings: Settings,
 
     text, schema = build(session, subject)
     try:
-        answer = provider.ask(SYSTEM, text, schema)
+        with _alive():
+            answer = provider.ask(SYSTEM, text, schema)
     except Retry as e:
         note.status, note.started_at = "queued", None
         state.error, state.error_at = str(e), utcnow()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import time
 from types import SimpleNamespace
 
 import anthropic
@@ -70,6 +71,24 @@ def owned_finding(session, **kw):
     session.add(f)
     session.commit()
     return f
+
+
+class SlowClaude(FakeClaude):
+    def create(self, **kw):
+        time.sleep(0.4)
+        return super().create(**kw)
+
+
+def test_a_slow_answer_keeps_the_service_up(session, settings, monkeypatch):
+    """The System tab calls the service not running after ai.HEARTBEAT without a word, and a
+    slow local model can take longer than that to answer: it keeps saying it's up."""
+    monkeypatch.setattr(ai, "BEAT_SECONDS", 0.05)
+    f = owned_finding(session)
+    ai.request(session, "finding", f.id, f.target_id, "admin")
+    then = utcnow() - datetime.timedelta(hours=1)
+    assert ai.run_once(session, provider(SlowClaude(FINDING_ANSWER)), settings, then) == "done"
+    session.expire_all()
+    assert session.get(AiState, 1).seen_at > then + datetime.timedelta(minutes=59)
 
 
 def test_a_finding_is_explained(session, settings):

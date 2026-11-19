@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import collections
 import datetime
 import ipaddress
 import json
@@ -610,13 +611,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         now = utcnow()
         state = services(session, now)
         day = now - datetime.timedelta(hours=24)
-        logged = dict(session.execute(
-            select(LogEntry.level >= logging.ERROR, func.count())
+        # By level, added up here: grouped by `level >= ERROR`, Postgres sees the two bound
+        # ERRORs as different expressions and refuses the query (SQLite doesn't mind).
+        logged = collections.Counter()
+        for level, n in session.execute(
+            select(LogEntry.level, func.count())
             .where(LogEntry.at >= day, LogEntry.level >= logging.WARNING)
-            .group_by(LogEntry.level >= logging.ERROR)).all())  # fmt: skip
+            .group_by(LogEntry.level)):  # fmt: skip
+            logged[level >= logging.ERROR] += n
         return page(request, session, "system.html", tab="system", state=state,
                     sync_counts=hass_sync.installed_counts(session), now=now, user=user,
-                    log_errors=logged.get(True, 0), log_warnings=logged.get(False, 0),
+                    log_errors=logged[True], log_warnings=logged[False],
                     log_days=settings.log_days)  # fmt: skip
 
     @app.get("/log")
