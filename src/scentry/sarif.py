@@ -22,6 +22,34 @@ def clean(text: Any, limit: int) -> str:
     return text[:limit] + ("…" if len(text) > limit else "")
 
 
+# Evidence (a line of the scanned code) keeps its hidden characters as a mark, "<U+202E>",
+# instead of losing them: a reviewer must see that the line holds one, or a bidi attack
+# and a check against one both look like "". Not "‮": that's how code writes them
+# itself, and a check written with escapes must still read differently from the
+# characters. A mark is plain text, safe on any page and in any export.
+MARK = re.compile(r"<U\+([0-9A-F]{4})>")
+
+
+def evidence(text: Any, limit: int = 500) -> str:
+    """A line (or a few) of the scanned code, as a finding keeps it."""
+    text = str(text or "").replace("\r\n", "\n")
+    text = _CONTROL.sub(lambda m: f"<U+{ord(m[0]):04X}>", text).strip()
+    if len(text) <= limit:
+        return text
+    return re.sub(r"<U\+[0-9A-F]{0,3}$", "", text[:limit]) + "…"  # not half a mark
+
+
+def hidden(code: str) -> bool:
+    """Whether a mark's code point is one evidence marks (and clean() removes)."""
+    return _CONTROL.match(chr(int(code, 16))) is not None
+
+
+def unmarked(text: str) -> str:
+    """Evidence without its marks: as it was kept before hidden characters were marked.
+    Fingerprints are made of this, so a finding keeps its identity (and suppression)."""
+    return MARK.sub(lambda m: "" if hidden(m[1]) else m[0], text)
+
+
 # Advisory ids: CVE, GitHub, the Python, Go and Rust databases, OSV's own and malicious
 # package reports. A rule named like one of these is a known vulnerability.
 ADVISORY = re.compile(
@@ -162,7 +190,7 @@ def parse(
                     message=clean(message, 2000),
                     file=clean(file, 1000) or None,
                     line=line,
-                    evidence=clean(snippet or _line_from(tree, file, line), 500) or None,
+                    evidence=evidence(snippet or _line_from(tree, file, line)) or None,
                     fingerprint_hint=hint,
                     vulns=vuln,
                     details=details,

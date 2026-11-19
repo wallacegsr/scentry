@@ -603,6 +603,34 @@ def test_my_codes_findings_show_their_rules_details(client):
     assert "osv-scanner's page for" not in page  # the same page as the bug's own link
 
 
+def test_hidden_characters_are_marked_on_a_finding(client):
+    now = utcnow()
+    with db.SessionLocal() as session:
+        t = Target(name="mine", profile="owned", source="https://github.com/dev/mine.git")
+        session.add(t)
+        session.flush()
+        scan = Scan(target_id=t.id, status="done", score=90, verdict="A", complete=True,
+                    finished_at=now)  # fmt: skip
+        session.add(scan)
+        session.flush()
+        code = f'if strings.ContainsAny(name, "{chr(0x202E)}<b>") || x == "<U+0041>" {{'
+        bidi = RawFinding("semgrep", "bidi", "Bidi characters", "medium", file="f.go", line=9,
+                          evidence=sarif.evidence(code))  # fmt: skip
+        plain = RawFinding("semgrep", "other", "Other", "low", file="f.go", line=2,
+                           evidence="x := 1")  # fmt: skip
+        findings.reconcile(session, t, scan, [ScannerRun("semgrep", "ok", findings=[bidi, plain])],
+                           now)  # fmt: skip
+        session.commit()
+        ids = {f.rule_id: f.id for f in session.scalars(select(Finding))}
+    page = client.get(f"/findings/{ids['bidi']}", auth=AUTH).text
+    assert ('<pre>if strings.ContainsAny(name, &#34;<span class="hidden-char" '
+            'title="right-to-left override">&lt;U+202E&gt;</span>&lt;b&gt;&#34;) || x == '
+            "&#34;&lt;U+0041&gt;&#34; {</pre>") in page  # fmt: skip
+    assert "a character the code holds but doesn" in page
+    page = client.get(f"/findings/{ids['other']}", auth=AUTH).text
+    assert "<pre>x := 1</pre>" in page and "hidden-char" not in page
+
+
 # --- on Postgres -----------------------------------------------------------------------
 
 POSTGRES = os.environ.get("SCENTRY_TEST_POSTGRES")  # an empty scratch database; CI sets it

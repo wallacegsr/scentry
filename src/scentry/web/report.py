@@ -693,9 +693,10 @@ def report_finding(report: Any, finding: Any) -> dict | None:
         if not isinstance(x, dict):
             continue
         raw = barkley.raw_finding(x)
-        if (raw.rule_id, raw.file, raw.line, raw.evidence) == (
-                finding.rule_id, finding.file, finding.line, finding.evidence):  # fmt: skip
-            return x
+        place = (raw.rule_id, raw.file, raw.line)
+        if place == (finding.rule_id, finding.file, finding.line) and (
+                sarif.unmarked(raw.evidence or "") == sarif.unmarked(finding.evidence or "")):
+            return x  # a finding kept before hidden characters were marked matches too
     return None
 
 

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from scentry import sarif
 from scentry.models import SEVERITY_RANK, Finding, Scan, Target, utcnow
 from scentry.scanners.base import RawFinding, ScannerRun
 
@@ -19,8 +20,10 @@ DEFAULT_SUPPRESSION_DAYS = 90
 def fingerprint(f: RawFinding) -> str:
     """Stable across rescans: the scanner's own id when it has one, otherwise the rule,
     the file and the matched text. The line number is used only as a last resort, so
-    code that merely moves keeps its finding (and its suppression)."""
-    where = f.fingerprint_hint or " ".join((f.evidence or "").split()) or str(f.line or "")
+    code that merely moves keeps its finding (and its suppression). The text is taken
+    without the marks of hidden characters, as it was kept before they were marked."""
+    text = " ".join(sarif.unmarked(f.evidence or "").split())
+    where = f.fingerprint_hint or text or str(f.line or "")
     digest = hashlib.sha256()
     for part in (f.scanner, f.rule_id, f.file or "", where):
         digest.update(part.encode("utf-8", "replace"))

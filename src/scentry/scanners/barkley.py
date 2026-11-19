@@ -304,5 +304,5 @@ def raw_finding(f: dict) -> RawFinding:
         category=sarif.clean(f.get("category"), 50),
         file=sarif.clean(f.get("file"), 1000) or None,
         line=line if isinstance(line, int) else None,
-        evidence=sarif.clean(f.get("evidence"), 500) or None,
+        evidence=sarif.evidence(f.get("evidence")) or None,
     )

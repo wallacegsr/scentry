@@ -100,6 +100,27 @@ def test_sarif_floor_and_path_escape(tmp_path):
     assert f.evidence is None  # a path outside the tree is never read
 
 
+def test_hidden_characters_in_evidence_are_marked():
+    rlo, lri, pdi = chr(0x202E), chr(0x2066), chr(0x2069)
+    assert sarif.evidence(f'return "{lri}" + x + "{pdi}"') == 'return "<U+2066>" + x + "<U+2069>"'
+    # A CRLF is a line end; a lone CR or an escape code is a hidden character.
+    assert sarif.evidence("x\x1b[2Jy\r\nz\rw") == "x<U+001B>[2Jy\nz<U+000D>w"
+    # Code that writes the character as an escape reads differently from the character.
+    written = r'ContainsAny(name, "\u202e")'
+    assert sarif.evidence(written) == written
+    assert sarif.evidence("a" * 497 + rlo) == "a" * 497 + "…"  # never half a mark
+    assert sarif.evidence(f"{rlo}  ") == "<U+202E>" and sarif.evidence(None) == ""
+    # Without its marks: what clean() kept before, so fingerprints don't move.
+    for text in (f'if strings.ContainsAny(name, "{rlo}{lri}") {{', "x\x1b[2Jy\r\n", "<U+0041> !"):
+        assert sarif.unmarked(sarif.evidence(text)) == sarif.clean(text, 500)
+    before = findings.fingerprint(raw(evidence=sarif.clean(f"a{rlo}b", 500)))
+    assert findings.fingerprint(raw(evidence=sarif.evidence(f"a{rlo}b"))) == before
+    doc = {"runs": [{"results": [{"ruleId": "bidi", "locations": [{"physicalLocation": {
+        "artifactLocation": {"uri": "a.go"}, "region": {"startLine": 1, "snippet": {
+            "text": f'x := "{rlo}"'}}}}]}]}]}  # fmt: skip
+    assert sarif.parse(doc, "semgrep")[0].evidence == 'x := "<U+202E>"'
+
+
 # --- fingerprints and lifecycle --------------------------------------------------------
 
 

@@ -15,6 +15,7 @@ import re
 import secrets
 import threading
 import time
+import unicodedata
 from collections import deque
 from pathlib import Path
 from typing import Annotated
@@ -38,6 +39,7 @@ from scentry import (
     hass_sync,
     logs,
     notify,
+    sarif,
     worker,
 )
 from scentry.config import Settings, get_settings
@@ -200,6 +202,24 @@ def scan_links(text: str) -> list[tuple[str, int | None]]:
     return pieces
 
 
+def marks(text: str) -> list[tuple[str, str | None]]:
+    """Evidence in pieces, each mark of a hidden character ("<U+202E>") with the
+    character's name; the template shows those marked out, and escapes every piece."""
+    pieces: list[tuple[str, str | None]] = []
+    at = 0
+    for m in sarif.MARK.finditer(text):
+        if not sarif.hidden(m[1]):
+            continue  # "<U+0041>" written in the code itself
+        if m.start() > at:
+            pieces.append((text[at:m.start()], None))
+        name = unicodedata.name(chr(int(m[1], 16)), "").lower() or "a control character"
+        pieces.append((m[0], name))
+        at = m.end()
+    if at < len(text):
+        pieces.append((text[at:], None))
+    return pieces
+
+
 def level_name(level: int) -> str:
     return logging.getLevelName(level).lower() if level in LEVEL_NAMES else str(level)
 
@@ -328,6 +348,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.env.filters["ago"] = ago
     templates.env.filters["bucket"] = bucket
     templates.env.filters["scan_links"] = scan_links
+    templates.env.filters["marks"] = marks
     templates.env.filters["level_name"] = level_name
     templates.env.filters["ai_label"] = ai_providers.label
     templates.env.globals["providers"] = ai_providers.PROVIDERS

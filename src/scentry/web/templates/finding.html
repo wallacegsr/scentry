@@ -58,7 +58,11 @@
       {% endif %}
       {% if (rule or about or pkg or bugs or doc) and (f.message or f.evidence) %}<h3 class="subhead">What {{ f.scanner }} reported</h3>{% endif %}
       {% if f.message %}<p>{{ f.message }}</p>{% endif %}
-      {% if f.evidence %}<pre>{{ f.evidence }}</pre>{% endif %}
+      {% if f.evidence %}{% set pieces = f.evidence|marks %}
+      <pre>{% for text, name in pieces %}{% if name %}<span class="hidden-char" title="{{ name }}">{{ text }}</span>{% else %}{{ text }}{% endif %}{% endfor %}</pre>
+      {% if pieces|selectattr(1)|list %}<p class="muted small">A mark like <span class="hidden-char">&lt;U+202E&gt;</span> is a character the code holds but doesn't show:
+        a direction override can make code read differently from how it runs. Its name is in the mark's tooltip.</p>{% endif %}
+      {% endif %}
       {% if not (f.message or f.evidence) %}<p class="muted">The scanner gave no more detail.</p>{% endif %}
       {% if rule %}<p class="muted small">The plain words are Barkley's, the same for every app with this finding.</p>{% endif %}
     </div>
