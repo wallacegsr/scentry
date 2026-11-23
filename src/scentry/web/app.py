@@ -126,6 +126,7 @@ REFRESH_SECONDS = 10
 CATALOG_PAGE = 50  # search results shown
 LOG_PAGE = 100  # log messages on a page
 PICK_MAX = 500  # findings suppressed at once
+MAX_INTERVAL_HOURS = 24 * 90  # the longest time between scheduled rescans
 LOG_LEVELS = {"warning": logging.WARNING, "error": logging.ERROR}  # the Log page's filter
 # Barkley's comparison buckets, in its order, as the scan page names them.
 DIFF_GROUPS = {"findings": "findings", "flows": "data flows", "data": "data read",
@@ -251,6 +252,22 @@ def marks(text: str) -> list[tuple[str, str | None]]:
     if at < len(text):
         pieces.append((text[at:], None))
     return pieces
+
+
+def interval(hours: int) -> int:
+    """Hours between scheduled rescans, as asked, within 0 (only when you ask) and the most."""
+    return max(0, min(hours, MAX_INTERVAL_HOURS))
+
+
+def every(hours: int) -> str:
+    """A rescan interval in words: "every week", "every 3 days", "every 12 hours"."""
+    if hours <= 0:
+        return "only when you ask"
+    for size, unit in ((168, "week"), (24, "day"), (1, "hour")):
+        if hours % size == 0:
+            n = hours // size
+            return f"every {unit}" if n == 1 else f"every {n} {unit}s"
+    return f"every {hours} hours"  # not reached: every whole number is hours
 
 
 def level_name(level: int) -> str:
@@ -388,8 +405,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.globals.update(version=__version__, reasons=SUPPRESSION_REASONS,
-                                 default_days=DEFAULT_SUPPRESSION_DAYS)  # fmt: skip
+                                 default_days=DEFAULT_SUPPRESSION_DAYS,
+                                 max_interval=MAX_INTERVAL_HOURS)  # fmt: skip
     templates.env.filters["ago"] = ago
+    templates.env.filters["every"] = every
     templates.env.filters["bucket"] = bucket
     templates.env.filters["scan_links"] = scan_links
     templates.env.filters["marks"] = marks
@@ -770,7 +789,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             profile=profile,
             source=source,
             ref=ref,
-            interval_hours=max(0, min(interval_hours, 24 * 90)),
+            interval_hours=interval(interval_hours),
             mine=mine_too,
         )
         session.add(target)
@@ -1074,6 +1093,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if on not in ("on", "off") or target.profile != "owned":
             raise HTTPException(400)
         target.mine = on == "on"
+        session.commit()
+        return RedirectResponse(f"/targets/{target_id}", 303)
+
+    @app.post("/targets/{target_id}/interval")
+    def target_interval(target_id: int, interval_hours: int = Form(...),
+                        session: Session = session_dep, user: str = user_dep):  # fmt: skip
+        """How often it's rescanned on a schedule. The worker counts from the last scan, so
+        a shorter interval that has already passed queues a scan within the minute."""
+        target = get_target(session, target_id)
+        target.interval_hours = interval(interval_hours)
         session.commit()
         return RedirectResponse(f"/targets/{target_id}", 303)
 

@@ -12,7 +12,7 @@
       <span class="mono">{{ target.source }}{% if target.ref %} @ {{ target.ref }}{% endif %}</span>
       <span>{% if target.profile == "owned" %}{{ "My code" if target.mine else "Someone else's repository" }}{% else %}Home Assistant {{ target.hacs_kind or "integration" }}{% endif %}</span>
       {% if target.origin == "hacs" %}<span>{% if target.hacs_removed_at %}uninstalled; no longer rescanned on a schedule{% else %}installed {{ target.installed_version }}{% endif %}</span>{% endif %}
-      {% if target.interval_hours and not target.hacs_removed_at %}<span>rescanned every {{ target.interval_hours }} hours</span>{% endif %}
+      {% if target.interval_hours and not target.hacs_removed_at %}<span>rescanned {{ target.interval_hours|every }}</span>{% endif %}
     </div>
     {% if app and app.popularity %}{{ popularity(app.popularity) }}{% endif %}
   </div>
@@ -28,6 +28,9 @@
 <div class="actions spaced">
   <form method="post" action="/targets/{{ target.id }}/scan"><button>{{ icon("scan", 16) }} Scan now</button></form>
   <button type="button" class="ghost" popovertarget="notify">{{ icon("bell", 16) }} Notifications{% if target.notify_muted %}: muted{% elif own %}: its own settings{% endif %}</button>
+  {% if not target.hacs_removed_at %}
+  <button type="button" class="ghost" popovertarget="schedule">{{ icon("clock", 16) }} Rescans: {{ target.interval_hours|every }}</button>
+  {% endif %}
   {% if target.profile == "owned" and target.source.startswith("https://") %}
   <form method="post" action="/targets/{{ target.id }}/watch">
     <input type="hidden" name="on" value="{{ 'off' if target.watch_commits else 'on' }}">
@@ -61,7 +64,7 @@
   {{ target.head_checked_at|ago if target.head_checked_at else "not yet" }}
   {%- if target.head_sha %}, at <span class="mono">{{ target.head_sha[:10] }}</span>{% endif %}.
   {% if target.head_error %}<span class="error-text">{{ target.head_error }}</span>{% endif %}
-{% else %}New commits aren't scanned; only {% if target.interval_hours %}every {{ target.interval_hours }} hours and {% endif %}when you ask.{% endif %}</p>
+{% else %}New commits aren't scanned; only {% if target.interval_hours %}{{ target.interval_hours|every }} and {% endif %}when you ask.{% endif %}</p>
 {% endif %}
 
 {% if why is not none and latest %}
@@ -289,6 +292,24 @@
     </form>
   </div>
 </div>
+
+{% if not target.hacs_removed_at %}
+<div id="schedule" popover class="modal" role="dialog" aria-label="Rescans">
+  {{ modal_head("schedule", "Rescans") }}
+  <div class="modal-body">
+    <form method="post" action="/targets/{{ target.id }}/interval" class="stack">
+      <p class="small muted">Code that hasn't changed can still gain findings: new advisories for its
+        dependencies, new scanner rules. A rescan is due this long after the last scan.</p>
+      <label class="field">Rescan every
+        <span class="inline"><input name="interval_hours" type="number" min="0" max="{{ max_interval }}" value="{{ target.interval_hours }}" class="short" required> hours</span>
+        <span class="hint">0: only when you ask. A day is 24, a week 168; at most {{ max_interval }} (90 days).</span></label>
+      <div class="form-actions">
+        <button type="button" class="ghost" popovertarget="schedule" popovertargetaction="hide">Cancel</button>
+        <button>Save</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
 
 <div id="remove" popover class="modal" role="dialog" aria-label="Remove">
   {{ modal_head("remove", "Remove " ~ target.name ~ "?") }}

@@ -29,6 +29,7 @@
 {%- elif name == "star" %}<path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/>
 {%- elif name == "cards" %}<rect x="3.5" y="4.5" width="7.5" height="15" rx="1.5"/><rect x="13" y="4.5" width="7.5" height="15" rx="1.5"/>
 {%- elif name == "table" %}<path d="M4 6.5h16M4 12h16M4 17.5h16"/>
+{%- elif name == "clock" %}<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>
 {%- endif %}
 </svg>
 {%- endmacro %}
@@ -141,7 +142,7 @@
 {% endif %}
 <label class="field"><span>Name <span class="muted">(optional)</span></span><input name="name" autocomplete="off"></label>
 <label class="field">Rescan every
-  <span class="inline"><input name="interval_hours" type="number" min="0" value="168" class="short"> hours</span>
+  <span class="inline"><input name="interval_hours" type="number" min="0" max="{{ max_interval }}" value="168" class="short"> hours</span>
   <span class="hint">0: only when you ask.</span></label>
 {%- endmacro %}
 

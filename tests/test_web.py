@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from scentry import db
 from scentry.config import Settings
-from scentry.models import Finding, Scan, Target
+from scentry.models import Finding, Scan, Target, utcnow
 from scentry.web.app import SignInLimit, create_app
 
 AUTH = ("admin", "pw")
@@ -411,3 +411,42 @@ def test_repositories_are_mine_or_others_under_nested_tabs(client):
     assert client.post(f"/targets/{card}/mine", auth=AUTH, data={"on": "on"}).status_code == 400
     page = client.get(f"/targets/{card}", auth=AUTH).text
     assert "Move to" not in page and '<a href="/others">Not installed</a>' in page
+
+
+def test_the_rescan_interval_can_be_changed(client):
+    r = client.post("/targets", auth=AUTH, data={
+        "profile": "owned", "source": "https://github.com/me/app.git", "mine": "1"})  # fmt: skip
+    tid = int(r.headers["location"].rsplit("/", 1)[1])
+    page = client.get(f"/targets/{tid}", auth=AUTH).text
+    assert "<span>rescanned every week</span>" in page and "Rescans: every week</button>" in page
+    assert ('<input name="interval_hours" type="number" min="0" max="2160" value="168"'
+            in page)  # fmt: skip
+
+    def saved():
+        with db.SessionLocal() as s:
+            return s.get(Target, tid).interval_hours
+
+    for sent, hours, words in (("24", 24, "every day"), ("36", 36, "every 36 hours"),
+                               ("336", 336, "every 2 weeks"), ("99999", 2160, "every 90 days"),
+                               ("-5", 0, "only when you ask"), ("0", 0, "only when you ask")):
+        r = client.post(f"/targets/{tid}/interval", data={"interval_hours": sent}, auth=AUTH)
+        assert r.status_code == 303 and r.headers["location"] == f"/targets/{tid}"
+        assert saved() == hours
+        assert f"Rescans: {words}</button>" in client.get(f"/targets/{tid}", auth=AUTH).text
+    assert "rescanned" not in client.get(f"/targets/{tid}", auth=AUTH).text  # 0: no schedule
+    assert client.post(f"/targets/{tid}/interval", data={"interval_hours": "weekly"},
+                       auth=AUTH).status_code == 422  # fmt: skip
+    assert client.post("/targets/999/interval", data={"interval_hours": "24"},
+                       auth=AUTH).status_code == 404  # fmt: skip
+    cross = client.post(f"/targets/{tid}/interval", data={"interval_hours": "24"}, auth=AUTH,
+                        headers={"Sec-Fetch-Site": "cross-site"})  # fmt: skip
+    assert cross.status_code == 403 and saved() == 0
+
+    # An app no longer installed isn't rescanned on a schedule: nothing to set.
+    with db.SessionLocal() as s:
+        gone = Target(name="gone", profile="ha", source="a/gone", origin="hacs",
+                      hacs_removed_at=utcnow(), enabled=False)  # fmt: skip
+        s.add(gone)
+        s.commit()
+        gone_id = gone.id
+    assert "Rescans:" not in client.get(f"/targets/{gone_id}", auth=AUTH).text
