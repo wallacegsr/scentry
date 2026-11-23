@@ -16,6 +16,14 @@ def main() -> None:
     sub.add_parser("ai", help="answer requests for AI explanations (needs a model set up)")
     sub.add_parser("migrate", help="bring the database to the newest schema (every service "
                                    "also does this when it starts)")  # fmt: skip
+    reset = sub.add_parser("reset-password", help="set a new admin password when it's "
+                                                  "forgotten (run it in the web container)")
+    how = reset.add_mutually_exclusive_group()
+    how.add_argument("--generate", action="store_true",
+                     help="make up a strong one and show it once")  # fmt: skip
+    how.add_argument("--use-env", action="store_true",
+                     help="forget the one set in the portal: SCENTRY_ADMIN_PASSWORD signs "
+                          "in again")  # fmt: skip
     new = sub.add_parser("new-migration", help="development: write a migration for model "
                                                "changes")  # fmt: skip
     new.add_argument("message")
@@ -28,6 +36,12 @@ def main() -> None:
         from scentry import bench as benchmark
 
         benchmark.main(args.args)
+    elif args.command == "reset-password":
+        import sys
+
+        from scentry import passwords
+
+        sys.exit(passwords.reset(generate=args.generate, use_env=args.use_env))
     elif args.command == "migrate":
         from scentry import db
         from scentry.config import get_settings

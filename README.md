@@ -187,6 +187,22 @@ minutes. Behind a proxy, every visitor arrives from the proxy's address, so some
 guessing would lock you out too: there, use `SCENTRY_AUTH_MODE=proxy` and let the
 proxy handle sign-in.
 
+`SCENTRY_ADMIN_PASSWORD` is the first password. **System → Sign-in → Change the
+password** sets another (the current one first, then at least 12 characters), kept in
+the database as a scrypt hash; from then on the `.env` one no longer signs in and can be
+removed. Each browser signed in with the old one asks for the new one. There's no reset
+by e-mail: whoever runs the server sets a new password in the web container, where the
+database's address is: `docker exec -it scentry-web-1 sh` (in Portainer the container
+is named after the stack, `<stack>-web-1`, and its *Console* opens the same shell):
+
+```sh
+scentry reset-password             # type a new one twice
+scentry reset-password --generate  # or have one made up, shown once
+scentry reset-password --use-env   # or go back to SCENTRY_ADMIN_PASSWORD
+```
+
+Each of these, and each change in the portal, is noted on the Log page.
+
 ### Upgrading
 
 Pull the new images (in Portainer: *Pull and redeploy*). Each service brings the

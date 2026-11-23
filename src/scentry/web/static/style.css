@@ -342,6 +342,7 @@ label.check .hint { display: block; margin-top: 2px; font-size: 0.8rem; color: v
 .alert.error { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 35%, transparent);
   color: var(--danger); }
 .alert.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+.alert.good { background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 30%, transparent); }
 .live { display: flex; align-items: center; gap: 10px; padding: 9px 14px; margin: 0 0 18px;
   background: var(--accent-soft); border-radius: var(--radius); }
 .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: 0 0 auto;
@@ -539,3 +540,6 @@ ul.bugs { display: grid; gap: 4px; }
 /* A field and its button on one line, the field taking the room (a pattern of files). */
 .field .inline.grow { display: flex; }
 .field .inline.grow input { flex: 1; min-width: 0; }
+
+/* A form of a few fields on a page of its own (the password). */
+form.slim { max-width: 34rem; }

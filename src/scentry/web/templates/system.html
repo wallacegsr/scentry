@@ -16,6 +16,10 @@
   </div>
 </div>
 
+{% if changed %}
+<p class="alert good">The password is changed. Every browser signed in with the old one asks for the new one.</p>
+{% endif %}
+
 {% if state.waiting[0] %}
 <section class="alert warn">
   <div>
@@ -112,6 +116,24 @@
         didn't finish, a notification that wasn't delivered, a lost connection. Kept {{ log_days }} days.</p>
     </div>
     <div class="card-foot small"><a href="/log?level=warning">Warnings and errors</a> · <a href="/log">Everything</a></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>{{ icon("shield", 16) }} Sign-in</h2></div>
+    <div class="card-body">
+      {% if auth_mode == "basic" %}
+      <p class="small">Signed in as {{ user }} with a password:
+        {% if password %}{{ "changed in the portal" if password.set_by == "portal" else "set with scentry reset-password" }}
+        {{ password.set_at|ago(now) }}.{% else %}SCENTRY_ADMIN_PASSWORD, from .env.{% endif %}</p>
+      {% if password %}<p class="muted small">SCENTRY_ADMIN_PASSWORD in .env no longer signs in, and can be removed.</p>{% endif %}
+      <p class="muted small">Forgotten? Whoever runs the server sets a new one with <code>scentry reset-password</code> in the web container.</p>
+      {% elif auth_mode == "proxy" %}
+      <p class="small">Signed in as {{ user }} through your proxy (SCENTRY_AUTH_MODE=proxy): its password, its reset.</p>
+      {% else %}
+      <p class="small">No sign-in (SCENTRY_AUTH_MODE=none): whoever can reach the portal can use it.</p>
+      {% endif %}
+    </div>
+    {% if auth_mode == "basic" %}<div class="card-foot small"><a href="/system/password">Change the password</a></div>{% endif %}
   </section>
 
   <section class="card">

@@ -40,6 +40,7 @@ from scentry import (
     hass_sync,
     logs,
     notify,
+    passwords,
     sarif,
     worker,
 )
@@ -64,6 +65,7 @@ from scentry.web import report as barkley_report
 from scentry.web.tables import ONCE, view
 
 HERE = Path(__file__).parent
+log = logging.getLogger(__name__)
 CSP = (
     "default-src 'none'; style-src 'self'; img-src 'self'; "
     "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
@@ -357,8 +359,29 @@ class SignInLimit:
             self._failed[who] = seen
 
 
-def make_auth(settings: Settings):
-    limit = SignInLimit()
+class Admin:
+    """Signing in with a password (SCENTRY_AUTH_MODE=basic): SCENTRY_ADMIN_USER, with the
+    password set in the portal (or by `scentry reset-password`) once there is one, and
+    SCENTRY_ADMIN_PASSWORD until then."""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.limit = SignInLimit()
+        self.verified = passwords.Verified()
+
+    def password_ok(self, password: str) -> bool:
+        with db.SessionLocal() as session:
+            row = passwords.stored(session)
+            stored_hash = row.hash if row else None
+        if stored_hash:
+            return self.verified.check(password, stored_hash)
+        expected = self.settings.admin_password
+        return bool(expected) and secrets.compare_digest(password.encode(), expected.encode())
+
+
+def make_auth(settings: Settings, admin: Admin | None = None):
+    admin = admin or Admin(settings)
+    limit = admin.limit
 
     def require_user(request: Request) -> str:
         if settings.auth_mode == "none":
@@ -383,7 +406,7 @@ def make_auth(settings: Settings):
             except (binascii.Error, UnicodeDecodeError):
                 user = password = ""
             user_ok = secrets.compare_digest(user.encode(), settings.admin_user.encode())
-            pass_ok = secrets.compare_digest(password.encode(), settings.admin_password.encode())
+            pass_ok = admin.password_ok(password)
             if user_ok and pass_ok:
                 return user
             limit.failed(who)
@@ -394,11 +417,14 @@ def make_auth(settings: Settings):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    if settings.auth_mode == "basic" and not settings.admin_password:
-        raise RuntimeError("Set SCENTRY_ADMIN_PASSWORD (or choose another SCENTRY_AUTH_MODE).")
     if settings.auth_mode == "proxy" and not settings.trusted_proxies:
         raise RuntimeError("SCENTRY_AUTH_MODE=proxy needs SCENTRY_TRUSTED_PROXIES.")
     db.configure(settings.database_url)
+    if settings.auth_mode == "basic" and not settings.admin_password:
+        with db.SessionLocal() as session:
+            if passwords.stored(session) is None:
+                raise RuntimeError("Set SCENTRY_ADMIN_PASSWORD (or choose another "
+                                   "SCENTRY_AUTH_MODE).")  # fmt: skip
 
     app = FastAPI(title="Scentry", version=__version__, docs_url=None, redoc_url=None,
                   openapi_url=None)  # fmt: skip
@@ -415,7 +441,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.env.filters["level_name"] = level_name
     templates.env.filters["ai_label"] = ai_providers.label
     templates.env.globals["providers"] = ai_providers.PROVIDERS
-    user_dep = Depends(make_auth(settings))
+    admin = Admin(settings)
+    user_dep = Depends(make_auth(settings, admin))
     session_dep = Depends(db.get_session)
 
     @app.middleware("http")
@@ -714,7 +741,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return page(request, session, "system.html", tab="system", state=state,
                     sync_counts=hass_sync.installed_counts(session), now=now, user=user,
                     log_errors=logged[True], log_warnings=logged[False],
-                    log_days=settings.log_days)  # fmt: skip
+                    log_days=settings.log_days, auth_mode=settings.auth_mode,
+                    password=passwords.stored(session),
+                    changed=request.query_params.get("password") == "changed")  # fmt: skip
+
+    def _password_page(request: Request, session: Session, user: str, problem: str | None):
+        response = page(request, session, "password.html", tab="system", problem=problem,
+                        password=passwords.stored(session), min_length=passwords.MIN_LENGTH,
+                        user=user)  # fmt: skip
+        if problem:
+            response.status_code = 400
+        return response
+
+    @app.get("/system/password")
+    def password_page(request: Request, session: Session = session_dep, user: str = user_dep):
+        if settings.auth_mode != "basic":
+            raise HTTPException(404)
+        return _password_page(request, session, user, None)
+
+    @app.post("/system/password")
+    def change_password(request: Request, current: str = Form(""), new: str = Form(""),
+                        repeat: str = Form(""), session: Session = session_dep,
+                        user: str = user_dep):  # fmt: skip
+        """The current password first, so a browser left signed in isn't enough: it sends
+        the password with each request by itself. A wrong one counts as a wrong sign-in.
+        Then the browser asks for the new one, here and wherever else it's signed in."""
+        if settings.auth_mode != "basic":
+            raise HTTPException(404)
+        if not admin.password_ok(current):
+            admin.limit.failed(request.client.host if request.client else "")
+            problem = "That isn't the current password."
+        elif new == current:
+            problem = "That's the password already."
+        else:
+            problem = passwords.problem(new, repeat)
+        if problem:  # nothing that was typed is sent back
+            return _password_page(request, session, user, problem)
+        passwords.set_password(session, new, "portal")
+        session.commit()
+        log.info("The admin password was changed in the portal, signed in as %s.", user)
+        return RedirectResponse("/system?password=changed", 303)
 
     @app.get("/log")
     def log_page(request: Request, q: str = "", service: str = "", level: str = "",

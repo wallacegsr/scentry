@@ -190,6 +190,19 @@ class Finding(Base):
     target: Mapped[Target] = relationship(back_populates="findings")
 
 
+class AdminPassword(Base):
+    """The admin's password once it's set in the portal or by `scentry reset-password`
+    (one row, id 1), as a scrypt hash: see passwords.py. While there's none, it's
+    SCENTRY_ADMIN_PASSWORD."""
+
+    __tablename__ = "admin_password"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    hash: Mapped[str] = mapped_column(String(300))
+    set_at: Mapped[datetime.datetime] = mapped_column(default=utcnow)
+    set_by: Mapped[str] = mapped_column(String(20))  # "portal" or "command"
+
+
 class RuleSuppression(Base):
     """One scanner rule suppressed in a target's files that match a pattern: the open
     findings it matches when it's made, and each finding a scan opens there later, until
